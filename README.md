@@ -51,3 +51,9 @@ Untuk sinkronisasi live dari Google Sheets/API, ganti loader di `src/main.jsx` a
 ## Catatan data
 
 Workbook sumber saat ini memiliki beberapa nilai error tersimpan, khususnya pada sheet **Realisasi Fisik & Keu** (`#REF!` dan `#NAME?`). Dashboard tidak menjumlahkan error tersebut; hanya nilai numerik yang valid yang dipakai dalam KPI.
+
+## V6 fixes
+- KPI uang di Dashboard menggunakan layout Rp + nominal terpisah agar tidak terpotong.
+- KPI utama dan panel ringkasan dapat diklik dan membuka detail animated modal.
+- Panel Serapan, Profil Fisik, dan Progress PKPT juga interaktif.
+- Mempertahankan editor kertas kerja V5 dan manajemen tahun.
