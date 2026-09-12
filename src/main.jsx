@@ -18,6 +18,33 @@ async function idbGet(key){ const db=await openAppDB(); return new Promise((reso
 async function idbSet(key,value){ const db=await openAppDB(); return new Promise((resolve,reject)=>{ const tx=db.transaction(IDB_STORE,'readwrite'); tx.objectStore(IDB_STORE).put(value,key); tx.oncomplete=()=>resolve(true); tx.onerror=()=>reject(tx.error||new Error('Gagal menyimpan database lokal')); }); }
 async function idbDel(key){ const db=await openAppDB(); return new Promise((resolve,reject)=>{ const tx=db.transaction(IDB_STORE,'readwrite'); tx.objectStore(IDB_STORE).delete(key); tx.oncomplete=()=>resolve(true); tx.onerror=()=>reject(tx.error); }); }
 async function loadStoredDatabase(){ const modern=await idbGet('database').catch(()=>null); if(modern?.years) return modern; try{ const raw=localStorage.getItem(STORAGE_KEY); if(raw){ const parsed=JSON.parse(raw); if(parsed?.years){ await idbSet('database',parsed); try{localStorage.removeItem(STORAGE_KEY);}catch{} return parsed; } } }catch{} return null; }
+function countMeaningfulRows(sheet){ const values=sheet?.values||[]; return values.filter(r=>(r||[]).some(v=>cleanText(v))).length; }
+function countMeaningfulCells(sheet){ let n=0; for(const r of (sheet?.values||[])) for(const v of (r||[])) if(cleanText(v)) n++; return n; }
+function repairStoredDatabaseFromSource(saved, source, baseYear){
+  if(!saved?.years || !source?.sheets) return {changed:false, database:saved};
+  const years={...saved.years};
+  let changed=false;
+  const storedYear=years[baseYear];
+  if(!storedYear?.sheets) { years[baseYear]=clone(source); changed=true; }
+  else {
+    const repaired=clone(storedYear);
+    repaired.sheets={...(repaired.sheets||{})};
+    for(const [name,baseSheet] of Object.entries(source.sheets||{})){
+      const current=repaired.sheets[name];
+      const baseCells=countMeaningfulCells(baseSheet);
+      const currentCells=countMeaningfulCells(current);
+      const currentRows=countMeaningfulRows(current);
+      // Only auto-heal clearly empty/missing stored sheets; never overwrite non-empty operator data.
+      if(!current || (currentRows===0 && baseCells>0) || (currentCells===0 && baseCells>0)){
+        repaired.sheets[name]=clone(baseSheet);
+        changed=true;
+      }
+    }
+    repaired.meta={...(repaired.meta||{}),year:Number(baseYear),sheetCount:Object.keys(repaired.sheets||{}).length};
+    years[baseYear]=repaired;
+  }
+  return {changed,database:{...saved,years,updatedAt:new Date().toISOString()}};
+}
 async function saveStoredDatabase(value){ await idbSet('database',value); try{localStorage.setItem(`${STORAGE_KEY}:activeYear`,String(value?.activeYear||''));}catch{} }
 async function loadActiveYear(){ try{ const raw=localStorage.getItem(`${STORAGE_KEY}:activeYear`); return raw?Number(raw):null; }catch{return null} }
 async function clearLegacyStorage(){ try{localStorage.removeItem(STORAGE_KEY);localStorage.removeItem(IMPORT_AUDIT_KEY);localStorage.removeItem(IMPORT_BACKUP_KEY);localStorage.removeItem(IMPORT_TEMPLATE_KEY);}catch{} }
@@ -77,8 +104,8 @@ const formulaSpecs = {
   'Capaian Sasaran SUBKegiatan (P)': { inputs: ['I:J','M:N'], computed: ['K','O'], note: 'K = J ÷ I (displayed as %); O = N ÷ M (displayed as %).' },
   'Monev Renaksi IKU': { inputs: ['F:I','J:M'], computed: ['Virtual % per TW'], note: 'Capaian triwulan = realisasi TW ÷ target TW × 100. Tidak menimpa input.' },
   'Monev Program': { inputs: ['H:K','L:O','R:S'], computed: ['Virtual % per TW','% Realisasi Anggaran'], note: 'Capaian TW dan % anggaran dihitung untuk monitoring tanpa menimpa input.' },
-  'Monev output Subkegiatan Utama': { inputs: ['H','L'], computed: ['Virtual output count'], note: 'Output utama dipantau dari aktivitas dan jumlah output yang diisi.' },
-  'Monev Subkegiatan Penunjang': { inputs: ['H','K'], computed: ['Virtual output count'], note: 'Output penunjang dipantau dari aktivitas dan jumlah output yang diisi.' },
+  'Monev output Subkegiatan Utama': { inputs: ['H','J','K','L','M','N'], computed: ['Virtual output count'], note: 'Aktivitas, pelaksana, dasar penugasan, jumlah output, kendala, dan solusi merupakan input; jumlah output dipakai otomatis untuk KPI.' },
+  'Monev Subkegiatan Penunjang': { inputs: ['H','I','J','K','L','M'], computed: ['Virtual output count'], note: 'Aktivitas, pengampu, PPTK, jumlah output, kendala, dan solusi merupakan input; jumlah output dipakai otomatis untuk KPI.' },
   'Rekap realisasi PKPT': { inputs: ['D:E','J:L'], computed: ['Virtual % penyelesaian'], note: 'Progress penugasan = realisasi ÷ target × 100 saat angka tersedia.' },
   'Realisasi Fisik & Keu': { inputs: ['C','K'], computed: ['D','E','F','H','I','J'], note: 'C anggaran dan K permasalahan dapat diedit. E realisasi fisik dihitung otomatis dari H sesuai rumus template (I/D x 100 secara aljabar = H). G realisasi keuangan adalah nilai sumber/hasil import pada detail; G pada baris program dan total dijumlahkan otomatis. D/F/H/I/J dihitung otomatis.' }
 };
@@ -408,7 +435,7 @@ function parseExcelWorkbook(file) {
       sheets[name]=metaSheet; year=year||detectYearInValues(values);
       for(const [a,f] of Object.entries(formulas)) if(isExternalFormula(f)){ const v=ws[a]?.v; if(v!==undefined && !isError(v)) { const rc=XLSX.utils.decode_cell(a); metaSheet.values[rc.r][rc.c]=v; } }
     });
-    return {version:'8.1.1',source:file.name,meta:{organization:ORG,year:year||new Date().getFullYear(),sheetCount:wb.SheetNames.length,preserveFormat:true},sheets,_templateBase64:arrayBufferToBase64(buf)};
+    return {version:'8.1.4',source:file.name,meta:{organization:ORG,year:year||new Date().getFullYear(),sheetCount:wb.SheetNames.length,preserveFormat:true},sheets,_templateBase64:arrayBufferToBase64(buf)};
   });
 }
 
@@ -592,14 +619,20 @@ function derive(payload){
 function prepareImportedForMode(imported,current,mapping,mode,targetYear){
   if(mode==='merge'){
     const out=clone(current);
-    for(const m of mapping){ if(!m.actual) continue; const incoming=clone(imported.sheets[m.actual]); if(m.status==='new') out.sheets[m.actual]=incoming; else out.sheets[m.expected]=incoming; }
+    for(const m of mapping){ if(!m.actual) continue; const incoming=clone(imported.sheets[m.actual]); if((incoming?.rows||0)>0){ if(m.status==='new') out.sheets[m.actual]=incoming; else out.sheets[m.expected]=incoming; } }
     out.meta={...(out.meta||{}),year:targetYear,sheetCount:Object.keys(out.sheets||{}).length}; return recalculatePayload(out);
   }
-  const out={version:'8.1.0',source:imported.source,meta:{...(imported.meta||{}),year:targetYear,preserveFormat:true},sheets:{}};
-  // Re-key matched sheets to the website's canonical 14-sheet names; preserve unmatched imported sheets only for a new-year import.
-  for(const m of mapping){ if(!m.actual) continue; const incoming=clone(imported.sheets[m.actual]); out.sheets[m.expected||m.actual]=incoming; }
+  // Active-year replace is a safe update: matched non-empty sheets are replaced, while missing/empty sheets from the current database are preserved.
+  const out={version:'8.1.4',source:imported.source,meta:{...(imported.meta||{}),year:targetYear,preserveFormat:true},sheets:clone(current?.sheets||{})};
+  for(const m of mapping){
+    if(!m.actual) continue;
+    const incoming=clone(imported.sheets[m.actual]);
+    if((incoming?.rows||0)===0 || (incoming?.cols||0)===0) continue;
+    out.sheets[m.expected||m.actual]=incoming;
+  }
   if(mode==='newyear'){
-    for(const name of Object.keys(imported.sheets||{})){ if(!mapping.some(m=>m.actual===name)) out.sheets[name]=clone(imported.sheets[name]); }
+    out.sheets={};
+    for(const [name,sheet] of Object.entries(imported.sheets||{})) out.sheets[name]=clone(sheet);
   }
   out.meta.sheetCount=Object.keys(out.sheets).length; return recalculatePayload(normalizePayloadForYear(out,targetYear));
 }
@@ -613,7 +646,7 @@ function payloadDiffSummary(before,after){
 }
 function App(){
   const [payload,setPayload]=useState(null),[baseline,setBaseline]=useState(null),[years,setYears]=useState({}),[year,setYear]=useState(null),[active,setActive]=useState('dashboard'),[selectedSheet,setSelectedSheet]=useState('Realisasi Fisik & Keu'),[query,setQuery]=useState(''),[selectedRow,setSelectedRow]=useState(null),[dirty,setDirty]=useState(false),[toast,setToast]=useState(''),[sidebarOpen,setSidebarOpen]=useState(false),[yearModal,setYearModal]=useState(false),[rowModal,setRowModal]=useState(null),[yearEditModal,setYearEditModal]=useState(false),[importModal,setImportModal]=useState(null),[auditModal,setAuditModal]=useState(false),[auditEntries,setAuditEntries]=useState([]),fileRef=useRef(null),xlsxRef=useRef(null);
-  useEffect(()=>{(async()=>{try{await initLocalStores();setAuditEntries(auditCache);const src=await fetch('/data/workbook.json').then(r=>{if(!r.ok)throw new Error(`HTTP ${r.status}`);return r.json()});const base=recalculatePayload(src);setBaseline(clone(base));const baseYear=yearFromPayload(base);let loaded={[baseYear]:base};const saved=await loadStoredDatabase();if(saved?.years)loaded=saved.years;const legacyRaw=(()=>{try{return localStorage.getItem(STORAGE_KEY)}catch{return null}})();const selected=(await loadActiveYear())||Number(saved?.activeYear)||Number(Object.keys(loaded).sort().reverse()[0])||baseYear;const current=loaded[selected]?recalculatePayload(clone(loaded[selected])):clone(base);setYears(loaded);setYear(selected);setPayload(current);if(saved||legacyRaw)setToast('Database lokal dipulihkan • penyimpanan aman IndexedDB');await clearLegacyStorage();}catch(e){setToast('Database sumber gagal dimuat: '+e.message)}})()},[]);
+  useEffect(()=>{(async()=>{try{await initLocalStores();setAuditEntries(auditCache);const src=await fetch('/data/workbook.json').then(r=>{if(!r.ok)throw new Error(`HTTP ${r.status}`);return r.json()});const base=recalculatePayload(src);setBaseline(clone(base));const baseYear=yearFromPayload(base);let loaded={[baseYear]:base};let saved=await loadStoredDatabase();let sourceRepairChanged=false;if(saved?.years){const repaired=repairStoredDatabaseFromSource(saved,base,baseYear);sourceRepairChanged=repaired.changed;if(repaired.changed){saved=repaired.database;await saveStoredDatabase(saved);setToast(`Sumber tahun ${baseYear} disinkronkan • sheet kosong dipulihkan dari workbook`);}loaded=saved.years;}const legacyRaw=(()=>{try{return localStorage.getItem(STORAGE_KEY)}catch{return null}})();const activeStored=(await loadActiveYear())||Number(saved?.activeYear);const selected=activeStored&&loaded[activeStored]?activeStored:Number(Object.keys(loaded).sort().reverse()[0])||baseYear;const current=loaded[selected]?recalculatePayload(clone(loaded[selected])):clone(base);setYears(loaded);setYear(selected);setPayload(current);if((saved||legacyRaw)&&!sourceRepairChanged)setToast('Database lokal dipulihkan • penyimpanan aman IndexedDB');await clearLegacyStorage();}catch(e){setToast('Database sumber gagal dimuat: '+e.message)}})()},[]);
   useEffect(()=>{if(!toast)return;const t=setTimeout(()=>setToast(''),3200);return()=>clearTimeout(t)},[toast]); useEffect(()=>{document.title=`${ORG} — Dashboard Realisasi Kinerja`},[]);
   useEffect(()=>{const h=e=>{const d=e.detail||{};if(d.sheet!==undefined)setRowModal({sheet:d.sheet,row:d.row})};window.addEventListener('open-row-editor',h);return()=>window.removeEventListener('open-row-editor',h)},[]);
   const derived=useMemo(()=>payload?derive(payload):null,[payload]); const sheetNames=useMemo(()=>payload?Object.keys(payload.sheets||{}):[],[payload]);
