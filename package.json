@@ -1,7 +1,7 @@
 {
-  "name": "dashboard-realisasi-kinerja-mahakam-ulu",
+  "name": "dashboard-realisasi-kinerja-mahakam-ulu-public",
   "private": true,
-  "version": "8.1.1-pre-google-api",
+  "version": "9.0.0-public-fullstack",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -12,8 +12,7 @@
     "@vitejs/plugin-react": "4.3.3",
     "vite": "5.4.10",
     "react": "18.3.1",
-    "react-dom": "18.3.1",
-    "xlsx": "0.18.5"
+    "react-dom": "18.3.1"
   },
   "devDependencies": {}
 }
