@@ -313,6 +313,68 @@ function normalizeSheetKey(name) {
     .replace(/penun/g, 'penunjang')
     .replace(/output/g, 'output');
 }
+
+function mergeSheetRecords(primary, secondary){
+  if(!primary) return clone(secondary);
+  if(!secondary) return clone(primary);
+  const a=clone(primary), b=secondary;
+  const rows=Math.max(a.values?.length||0,b.values?.length||0);
+  const cols=Math.max(a.cols||0,b.cols||0,...(a.values||[]).map(r=>r?.length||0),...(b.values||[]).map(r=>r?.length||0));
+  a.values=a.values||[];
+  for(let r=0;r<rows;r++){
+    if(!a.values[r]) a.values[r]=Array(cols).fill('');
+    if(!b.values?.[r]) continue;
+    if(a.values[r].length<cols) a.values[r].length=cols;
+    for(let c=0;c<cols;c++){
+      const av=a.values[r][c], bv=b.values[r][c];
+      if((av===undefined||av===null||cleanText(av)==='') && bv!==undefined && bv!==null && cleanText(bv)!=='') a.values[r][c]=bv;
+    }
+  }
+  a.rows=a.values.length; a.cols=cols;
+  a.formulas={...(b.formulas||{}),...(a.formulas||{})};
+  if(!a.presentation && b.presentation) a.presentation=clone(b.presentation);
+  return a;
+}
+function canonicalizeSheets(sheets, canonicalNames){
+  const source=sheets||{};
+  const names=Object.keys(source);
+  const canon=(canonicalNames&&canonicalNames.length?canonicalNames:Object.keys(source));
+  const out={}; const assigned=new Set(); let changed=false;
+  // Exact/normalized canonical matches first.
+  for(const c of canon){
+    const candidates=names.filter(n=>!assigned.has(n) && (n===c || normalizeSheetKey(n)===normalizeSheetKey(c)));
+    if(candidates.length){
+      let pick=candidates[0];
+      for(const n of candidates){
+        if((source[n]?.values?.length||0)>(source[pick]?.values?.length||0)) pick=n;
+      }
+      let merged=clone(source[pick]); assigned.add(pick);
+      for(const n of candidates){
+        if(n===pick) continue;
+        merged=mergeSheetRecords(merged,source[n]); assigned.add(n);
+      }
+      if(pick!==c || candidates.length>1) changed=true;
+      merged.name=c; out[c]=merged;
+    }
+  }
+  // Fuzzy aliases (conservative) and true new sheets.
+  for(const n of names){
+    if(assigned.has(n)) continue;
+    let best=null;
+    for(const c of canon){
+      if(out[c]) continue;
+      const score=similarity(n,c);
+      if(score>=0.82 && (!best||score>best.score)) best={c,score};
+    }
+    if(best){
+      out[best.c]=mergeSheetRecords(out[best.c],source[n]); assigned.add(n); changed=true;
+    } else {
+      // Preserve genuinely new sheet names.
+      out[n]=source[n]; assigned.add(n);
+    }
+  }
+  return {sheets:out,changed};
+}
 function similarity(a,b){
   a=normalizeSheetKey(a); b=normalizeSheetKey(b); if(a===b) return 1;
   const grams=(x,n=2)=>{const out=[];for(let i=0;i<x.length-n+1;i++)out.push(x.slice(i,i+n));return out;};
@@ -320,8 +382,9 @@ function similarity(a,b){
   let inter=0; A.forEach(x=>{if(B.has(x))inter++;}); return (2*inter)/(A.size+B.size);
 }
 function buildSchemaMapping(importedPayload, currentPayload){
-  const currentNames=Object.keys(currentPayload?.sheets||{});
-  const importedNames=Object.keys(importedPayload?.sheets||{});
+  const currentNames=Object.keys(canonicalizeSheets(currentPayload?.sheets||{},Object.keys(currentPayload?.sheets||{})).sheets);
+  const importedCanon=canonicalizeSheets(importedPayload?.sheets||{},currentNames).sheets;
+  const importedNames=Object.keys(importedCanon);
   const used=new Set(); const rows=[];
   for(const expected of currentNames){
     let best=null;
@@ -435,7 +498,7 @@ function parseExcelWorkbook(file) {
       sheets[name]=metaSheet; year=year||detectYearInValues(values);
       for(const [a,f] of Object.entries(formulas)) if(isExternalFormula(f)){ const v=ws[a]?.v; if(v!==undefined && !isError(v)) { const rc=XLSX.utils.decode_cell(a); metaSheet.values[rc.r][rc.c]=v; } }
     });
-    return {version:'8.1.4',source:file.name,meta:{organization:ORG,year:year||new Date().getFullYear(),sheetCount:wb.SheetNames.length,preserveFormat:true},sheets,_templateBase64:arrayBufferToBase64(buf)};
+    return {version:'8.1.5',source:file.name,meta:{organization:ORG,year:year||new Date().getFullYear(),sheetCount:wb.SheetNames.length,preserveFormat:true},sheets,_templateBase64:arrayBufferToBase64(buf)};
   });
 }
 
@@ -617,22 +680,25 @@ function derive(payload){
   };
 }
 function prepareImportedForMode(imported,current,mapping,mode,targetYear){
+  const currentCanon=canonicalizeSheets(current?.sheets||{},Object.keys(current?.sheets||{})).sheets;
+  const importedCanon=canonicalizeSheets(imported?.sheets||{},Object.keys(currentCanon)).sheets;
+  const importedNorm={...imported,sheets:importedCanon};
   if(mode==='merge'){
-    const out=clone(current);
-    for(const m of mapping){ if(!m.actual) continue; const incoming=clone(imported.sheets[m.actual]); if((incoming?.rows||0)>0){ if(m.status==='new') out.sheets[m.actual]=incoming; else out.sheets[m.expected]=incoming; } }
+    const out=clone(current); out.sheets=currentCanon;
+    for(const m of mapping){ if(!m.actual) continue; const incoming=clone(importedNorm.sheets[m.actual]); if((incoming?.rows||0)>0){ if(m.status==='new') out.sheets[m.actual]=incoming; else out.sheets[m.expected]=incoming; } }
     out.meta={...(out.meta||{}),year:targetYear,sheetCount:Object.keys(out.sheets||{}).length}; return recalculatePayload(out);
   }
   // Active-year replace is a safe update: matched non-empty sheets are replaced, while missing/empty sheets from the current database are preserved.
-  const out={version:'8.1.4',source:imported.source,meta:{...(imported.meta||{}),year:targetYear,preserveFormat:true},sheets:clone(current?.sheets||{})};
+  const out={version:'8.1.5',source:importedNorm.source,meta:{...(importedNorm.meta||{}),year:targetYear,preserveFormat:true},sheets:clone(currentCanon||{})};
   for(const m of mapping){
     if(!m.actual) continue;
-    const incoming=clone(imported.sheets[m.actual]);
+    const incoming=clone(importedNorm.sheets[m.actual]);
     if((incoming?.rows||0)===0 || (incoming?.cols||0)===0) continue;
     out.sheets[m.expected||m.actual]=incoming;
   }
   if(mode==='newyear'){
     out.sheets={};
-    for(const [name,sheet] of Object.entries(imported.sheets||{})) out.sheets[name]=clone(sheet);
+    for(const [name,sheet] of Object.entries(importedNorm.sheets||{})) out.sheets[name]=clone(sheet);
   }
   out.meta.sheetCount=Object.keys(out.sheets).length; return recalculatePayload(normalizePayloadForYear(out,targetYear));
 }
@@ -646,7 +712,7 @@ function payloadDiffSummary(before,after){
 }
 function App(){
   const [payload,setPayload]=useState(null),[baseline,setBaseline]=useState(null),[years,setYears]=useState({}),[year,setYear]=useState(null),[active,setActive]=useState('dashboard'),[selectedSheet,setSelectedSheet]=useState('Realisasi Fisik & Keu'),[query,setQuery]=useState(''),[selectedRow,setSelectedRow]=useState(null),[dirty,setDirty]=useState(false),[toast,setToast]=useState(''),[sidebarOpen,setSidebarOpen]=useState(false),[yearModal,setYearModal]=useState(false),[rowModal,setRowModal]=useState(null),[yearEditModal,setYearEditModal]=useState(false),[importModal,setImportModal]=useState(null),[auditModal,setAuditModal]=useState(false),[auditEntries,setAuditEntries]=useState([]),fileRef=useRef(null),xlsxRef=useRef(null);
-  useEffect(()=>{(async()=>{try{await initLocalStores();setAuditEntries(auditCache);const src=await fetch('/data/workbook.json').then(r=>{if(!r.ok)throw new Error(`HTTP ${r.status}`);return r.json()});const base=recalculatePayload(src);setBaseline(clone(base));const baseYear=yearFromPayload(base);let loaded={[baseYear]:base};let saved=await loadStoredDatabase();let sourceRepairChanged=false;if(saved?.years){const repaired=repairStoredDatabaseFromSource(saved,base,baseYear);sourceRepairChanged=repaired.changed;if(repaired.changed){saved=repaired.database;await saveStoredDatabase(saved);setToast(`Sumber tahun ${baseYear} disinkronkan • sheet kosong dipulihkan dari workbook`);}loaded=saved.years;}const legacyRaw=(()=>{try{return localStorage.getItem(STORAGE_KEY)}catch{return null}})();const activeStored=(await loadActiveYear())||Number(saved?.activeYear);const selected=activeStored&&loaded[activeStored]?activeStored:Number(Object.keys(loaded).sort().reverse()[0])||baseYear;const current=loaded[selected]?recalculatePayload(clone(loaded[selected])):clone(base);setYears(loaded);setYear(selected);setPayload(current);if((saved||legacyRaw)&&!sourceRepairChanged)setToast('Database lokal dipulihkan • penyimpanan aman IndexedDB');await clearLegacyStorage();}catch(e){setToast('Database sumber gagal dimuat: '+e.message)}})()},[]);
+  useEffect(()=>{(async()=>{try{await initLocalStores();setAuditEntries(auditCache);const src=await fetch('/data/workbook.json').then(r=>{if(!r.ok)throw new Error(`HTTP ${r.status}`);return r.json()});const base=recalculatePayload(src);setBaseline(clone(base));const baseYear=yearFromPayload(base);let loaded={[baseYear]:base};let saved=await loadStoredDatabase();let sourceRepairChanged=false;if(saved?.years){let normalizedYears={...saved.years};for(const [yr,yp] of Object.entries(normalizedYears)){const canon=canonicalizeSheets(yp?.sheets||{},Object.keys(base.sheets||{}));if(canon.changed){normalizedYears[yr]={...yp,sheets:canon.sheets,meta:{...(yp.meta||{}),sheetCount:Object.keys(canon.sheets).length}};sourceRepairChanged=true;}}saved={...saved,years:normalizedYears};const repaired=repairStoredDatabaseFromSource(saved,base,baseYear);sourceRepairChanged=sourceRepairChanged||repaired.changed;if(sourceRepairChanged){saved=repaired.database||saved;await saveStoredDatabase(saved);setToast(`Database tahun diselaraskan • duplikasi sheet dibersihkan dan sheet kosong dipulihkan`);}loaded=saved.years;}const legacyRaw=(()=>{try{return localStorage.getItem(STORAGE_KEY)}catch{return null}})();const activeStored=(await loadActiveYear())||Number(saved?.activeYear);const selected=activeStored&&loaded[activeStored]?activeStored:Number(Object.keys(loaded).sort().reverse()[0])||baseYear;const current=loaded[selected]?recalculatePayload(clone(loaded[selected])):clone(base);setYears(loaded);setYear(selected);setSelectedSheet(current.sheets?.['Realisasi Fisik & Keu']?'Realisasi Fisik & Keu':Object.keys(current.sheets||{})[0]||'');setPayload(current);if((saved||legacyRaw)&&!sourceRepairChanged)setToast('Database lokal dipulihkan • penyimpanan aman IndexedDB');await clearLegacyStorage();}catch(e){setToast('Database sumber gagal dimuat: '+e.message)}})()},[]);
   useEffect(()=>{if(!toast)return;const t=setTimeout(()=>setToast(''),3200);return()=>clearTimeout(t)},[toast]); useEffect(()=>{document.title=`${ORG} — Dashboard Realisasi Kinerja`},[]);
   useEffect(()=>{const h=e=>{const d=e.detail||{};if(d.sheet!==undefined)setRowModal({sheet:d.sheet,row:d.row})};window.addEventListener('open-row-editor',h);return()=>window.removeEventListener('open-row-editor',h)},[]);
   const derived=useMemo(()=>payload?derive(payload):null,[payload]); const sheetNames=useMemo(()=>payload?Object.keys(payload.sheets||{}):[],[payload]);
