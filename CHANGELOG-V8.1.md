@@ -25,9 +25,15 @@
 - Memperbaiki kegagalan import saat browser mencapai kuota localStorage.
 - Rollback import sekarang asynchronous dan aman terhadap database besar.
 
-## V8.1.2 — Calculation Fix
+## V8.1.3 — Calculation Fix
 - Fixed dashboard double-counting in Total Anggaran and Total Realisasi Keuangan.
 - KPI totals now use office total/top-level program summaries only.
 - Added dynamic Realisasi structure detection and calculation audit metadata.
 - PKPT status range now stops before output summary section.
-- Added CALCULATION-AUDIT-V8.1.2.md.
+- Added CALCULATION-AUDIT-V8.1.3.md.
+
+## V8.1.3
+- Memperbaiki logika Realisasi Fisik: kolom E detail diperlakukan sebagai input, bukan formula keuangan.
+- Mengisi formula turunan D/F/H/I/J secara konsisten pada baris detail.
+- Menyinkronkan formula capaian % dan % realisasi anggaran pada sheet capaian yang terisi.
+- Import Excel menetralkan formula E detail yang salah dan mempertahankan nilai inputnya.
