@@ -108,88 +108,156 @@ function recalculateCapaian(s, meta) {
   }
 }
 
+
+function isProgramHeaderValue(v) {
+  return cleanText(v).toUpperCase().startsWith('PROGRAM ');
+}
+function findRealisasiStructure(values) {
+  const rows = values || [];
+  let officeRow = rows.findIndex(r => cleanText(r?.[0]).toUpperCase() === 'I' && cleanText(r?.[1]).toUpperCase().includes('INSPEKTORAT'));
+  if (officeRow < 0) officeRow = Math.min(9, Math.max(0, rows.length - 1));
+  let totalRow = rows.findIndex(r => cleanText(r?.[0]).toUpperCase() === 'JUMLAH BELANJA');
+  const end = totalRow >= 0 ? totalRow : rows.length;
+  const programRows = [];
+  for (let i = officeRow + 1; i < end; i++) {
+    const a = cleanText(rows[i]?.[0]);
+    const b = cleanText(rows[i]?.[1]);
+    if (/^\d+$/.test(a) && isProgramHeaderValue(b)) programRows.push(i + 1);
+  }
+  return { officeRow: officeRow + 1, totalRow: totalRow + 1, programRows };
+}
+function getRealisasiTotals(values) {
+  const rows = values || [];
+  const { officeRow, totalRow, programRows } = findRealisasiStructure(rows);
+  const top = [];
+  for (let i = 0; i < programRows.length; i++) {
+    const sr = programRows[i];
+    const next = programRows[i + 1] || (totalRow > 0 ? totalRow : rows.length + 1);
+    const summary = rows[sr - 1] || [];
+    let budget = parseNumber(summary[2]);
+    let fin = parseNumber(summary[6]);
+    if (budget === null || fin === null) {
+      const detailRows = [];
+      for (let rr = sr + 1; rr < next; rr++) {
+        const r = rows[rr - 1] || [];
+        if (cleanText(r[1]) === '') continue;
+        if (parseNumber(r[2]) !== null || parseNumber(r[6]) !== null) detailRows.push(r);
+      }
+      if (budget === null) budget = detailRows.reduce((a,r) => a + (parseNumber(r[2]) || 0), 0);
+      if (fin === null) fin = detailRows.reduce((a,r) => a + (parseNumber(r[6]) || 0), 0);
+    }
+    top.push({ summary: sr, next, budget: budget ?? 0, fin: fin ?? 0 });
+  }
+  const office = rows[officeRow - 1] || [];
+  const officialTotal = parseNumber(office[2]);
+  const officialFin = parseNumber(office[6]);
+  const fallbackBudget = top.reduce((a,g) => a + (g.budget || 0), 0);
+  const fallbackFin = top.reduce((a,g) => a + (g.fin || 0), 0);
+  const budgetTotal = officialTotal !== null ? officialTotal : fallbackBudget;
+  const financialTotal = officialFin !== null ? officialFin : fallbackFin;
+  const officialPhysical = parseNumber(office[4]);
+  const derivedPhysical = (() => {
+    const items = top.map(g => ({ b: g.budget, p: parseNumber((rows[g.summary - 1] || [])[4]) }))
+      .filter(x => x.b > 0 && x.p !== null);
+    return items.length ? items.reduce((a,x) => a + x.b*x.p, 0) / items.reduce((a,x) => a + x.b, 0) : null;
+  })();
+  return {
+    officeRow, totalRow, programRows, top,
+    budgetTotal, financialTotal,
+    financialRate: budgetTotal ? financialTotal / budgetTotal * 100 : 0,
+    physicalRate: officialPhysical !== null ? officialPhysical : (derivedPhysical ?? 0),
+    officialPhysical
+  };
+}
+
 function recalculateRealisasi(s) {
-  const groups = [
-    { summary: 11, details: Array.from({length:13}, (_,i)=>12+i) },
-    { summary: 26, details: Array.from({length:14}, (_,i)=>27+i) },
-    { summary: 41, details: [42] },
-  ];
-  const officeRow = 10;
+  const rows = s.values || [];
+  const info = getRealisasiTotals(rows);
+  const officeRow = info.officeRow;
+  const totalRow = info.totalRow;
+  const top = info.top;
+  const totalBudget = info.budgetTotal;
+  const totalFin = info.financialTotal;
 
-  // Preserve explicitly supplied summary amounts; only fill blanks from the workbook hierarchy.
-  const summaryInfo = groups.map(({summary, details}) => {
-    const src = s.values[summary-1] || [];
-    let budget = parseNumber(src[2]);
-    let fin = parseNumber(src[6]);
-    if (budget === null) budget = details.reduce((a,rr)=>a+(parseNumber((s.values[rr-1]||[])[2])||0),0);
-    if (fin === null) fin = details.reduce((a,rr)=>a+(parseNumber((s.values[rr-1]||[])[6])||0),0);
-    return {summary, details, budget, fin};
-  });
-
-  const totalBudget = summaryInfo.reduce((a,g)=>a+(g.budget||0),0);
-  const totalFin = summaryInfo.reduce((a,g)=>a+(g.fin||0),0);
-
-  for (const {summary, details, budget:pb, fin:pf} of summaryInfo) {
-    const currentBudget = parseNumber((s.values[summary-1]||[])[2]);
-    const currentFin = parseNumber((s.values[summary-1]||[])[6]);
-    if (summary===11 && currentBudget===null) putFormula(s, summary-1, 2, '=SUM(C12:C24)', pb || '');
-    if (summary===11 && currentFin===null) putFormula(s, summary-1, 6, '=SUM(G12:G24)', pf || '');
-    if (summary===41 && currentBudget===null) putFormula(s, summary-1, 2, '=C42', pb || '');
-    if (summary===41 && currentFin===null) putFormula(s, summary-1, 6, '=G42', pf || '');
-
-    const d = totalBudget ? pb/totalBudget*100 : null;
-    // Keep source-provided summary physical realization (e.g. row 26 = 94 and row 41 = 95).
-    let phys = parseNumber((s.values[summary-1]||[])[4]);
-    if (phys===null && details.length===1) phys = parseNumber((s.values[details[0]-1]||[])[4]);
-    if (phys===null && details.length>1) {
-      const items=details.map(rr=>({b:parseNumber((s.values[rr-1]||[])[2]),p:parseNumber((s.values[rr-1]||[])[4])})).filter(x=>x.b!==null&&x.p!==null);
-      phys=items.length?items.reduce((a,x)=>a+x.b*x.p,0)/items.reduce((a,x)=>a+x.b,0):null;
+  // Fill only missing top-level program amounts from their child rows.
+  for (const g of top) {
+    const src = rows[g.summary - 1] || [];
+    if (parseNumber(src[2]) === null) {
+      putFormula(s, g.summary - 1, 2, `=SUM(C${g.summary + 1}:C${g.next - 1})`, g.budget || '');
     }
-    putFormula(s, summary-1, 3, `=IF($C$${officeRow}=0,\"\",C${summary}/$C$${officeRow}*100)`, d===null?'':+d.toFixed(6));
-    putFormula(s, summary-1, 4, details.length===1 ? `=E${details[0]}` : `=IFERROR(SUMPRODUCT(C${details[0]}:C${details[details.length-1]},E${details[0]}:E${details[details.length-1]})/C${summary},\"\")`, phys===null?'':+phys.toFixed(6));
-    putFormula(s, summary-1, 5, `=IF(OR(D${summary}=\"\",E${summary}=\"\"),\"\",D${summary}*E${summary}/100)`, d!==null&&phys!==null?+(d*phys/100).toFixed(6):'');
-    const rate=pb&&pf!==null?pf/pb*100:null;
-    putFormula(s, summary-1, 7, `=IF(OR(C${summary}=\"\",G${summary}=\"\",C${summary}=0),\"\",G${summary}/C${summary}*100)`, rate===null?'':+rate.toFixed(6));
-    putFormula(s, summary-1, 8, `=IF(OR(H${summary}=\"\",D${summary}=\"\"),\"\",H${summary}*D${summary}/100)`, rate!==null&&d!==null?+(rate*d/100).toFixed(6):'');
-    putFormula(s, summary-1, 9, `=IF(OR(C${summary}=\"\",G${summary}=\"\"),\"\",C${summary}-G${summary})`, pf!==null?pb-pf:'');
-  }
-
-  // Detail rows derive their budget share, physical weight, financial rate, weighted financial share and remaining balance.
-  for (const {summary, details} of groups.flatMap(g=>[g])) {
-    const parentBudget = parseNumber((s.values[summary-1]||[])[2]);
-    for (const rr of details) {
-      const row=s.values[rr-1]||[]; const b=parseNumber(row[2]); const phys=parseNumber(row[4]); const fin=parseNumber(row[6]);
-      const d=parentBudget!==null&&parentBudget!==0&&b!==null?b/parentBudget*100:null;
-      const h=b!==null&&b!==0&&fin!==null?fin/b*100:null;
-      putFormula(s,rr-1,3,`=IF(OR($C$${summary}=0,C${rr}=\"\"),\"\",C${rr}/$C$${summary}*100)`,d===null?'':+d.toFixed(6));
-      putFormula(s,rr-1,5,`=IF(OR(D${rr}=\"\",E${rr}=\"\"),\"\",D${rr}*E${rr}/100)`,d!==null&&phys!==null?+(d*phys/100).toFixed(6):'');
-      putFormula(s,rr-1,7,`=IF(OR(C${rr}=\"\",G${rr}=\"\",C${rr}=0),\"\",G${rr}/C${rr}*100)`,h===null?'':+h.toFixed(6));
-      putFormula(s,rr-1,8,`=IF(OR(H${rr}=\"\",D${rr}=\"\"),\"\",H${rr}*D${rr}/100)`,h!==null&&d!==null?+(h*d/100).toFixed(6):'');
-      putFormula(s,rr-1,9,`=IF(OR(C${rr}=\"\",G${rr}=\"\"),\"\",C${rr}-G${rr})`,b!==null&&fin!==null?b-fin:'');
+    if (parseNumber(src[6]) === null) {
+      putFormula(s, g.summary - 1, 6, `=SUM(G${g.summary + 1}:G${g.next - 1})`, g.fin || '');
     }
   }
 
-  // Office total follows top-level program totals: program 1 derived from details if blank, program 2 explicit summary, program 3 explicit/link.
-  putFormula(s,officeRow-1,2,'=SUM(C11,C26,C41)',totalBudget||'');
-  putFormula(s,officeRow-1,3,'=IF(C10=0,\"\",100)',totalBudget?100:'');
-  const sourcePhys=parseNumber((s.values[officeRow-1]||[])[4]);
-  const topPhysical = summaryInfo.map(g=>({b:g.budget,p:parseNumber((s.values[g.summary-1]||[])[4])})).filter(x=>x.b!==null&&x.p!==null);
-  const fallbackPhys=topPhysical.length?topPhysical.reduce((a,x)=>a+x.b*x.p,0)/topPhysical.reduce((a,x)=>a+x.b,0):null;
-  // Do not overwrite an official imported office physical value; calculate only when blank.
-  if(sourcePhys===null) putFormula(s,officeRow-1,4,'=IFERROR((C11*E11+C26*E26+C41*E41)/C10,\"\")',fallbackPhys===null?'':+fallbackPhys.toFixed(6));
-  else putFormula(s,officeRow-1,4,'=E10',sourcePhys);
-  const officePhys=sourcePhys===null?fallbackPhys:sourcePhys;
-  putFormula(s,officeRow-1,5,'=IF(OR(D10=\"\",E10=\"\"),\"\",D10*E10/100)',officePhys===null?'':+officePhys.toFixed(6));
-  putFormula(s,officeRow-1,6,'=SUM(G11,G26,G41)',totalFin||'');
-  const tr=totalBudget?totalFin/totalBudget*100:null;
-  putFormula(s,officeRow-1,7,'=IF(C10=0,\"\",G10/C10*100)',tr===null?'':+tr.toFixed(6));
-  putFormula(s,officeRow-1,8,'=IF(OR(H10=\"\",D10=\"\"),\"\",H10*D10/100)',tr===null?'':+tr.toFixed(6));
-  putFormula(s,officeRow-1,9,'=IF(OR(C10=\"\",G10=\"\"),\"\",C10-G10)',totalBudget-totalFin);
+  // Calculate each top-level program and its children.
+  for (const g of top) {
+    const summaryRow = g.summary;
+    const parentBudget = parseNumber((rows[summaryRow - 1] || [])[2]) ?? g.budget;
+    const currentPhys = parseNumber((rows[summaryRow - 1] || [])[4]);
+    const detailPhysical = [];
+    for (let rr = summaryRow + 1; rr < g.next; rr++) {
+      const dr = rows[rr - 1] || [];
+      const db = parseNumber(dr[2]), dp = parseNumber(dr[4]);
+      if (cleanText(dr[1]) !== '' && db !== null && db > 0 && dp !== null) detailPhysical.push({row:rr,b:db,p:dp});
+    }
+    const phys = currentPhys !== null
+      ? currentPhys
+      : (detailPhysical.length ? detailPhysical.reduce((a,x)=>a+x.b*x.p,0)/detailPhysical.reduce((a,x)=>a+x.b,0) : null);
+    const weight = totalBudget ? parentBudget/totalBudget*100 : null;
+    const rate = parentBudget && g.fin !== null ? g.fin/parentBudget*100 : null;
+    putFormula(s, summaryRow - 1, 3, `=IF($C$${officeRow}=0,"",C${summaryRow}/$C$${officeRow}*100)`, weight===null?'':+weight.toFixed(6));
+    if (currentPhys === null && detailPhysical.length) {
+      const physFormula = detailPhysical.length===1
+        ? `=E${detailPhysical[0].row}`
+        : `=IFERROR((${detailPhysical.map(x=>`C${x.row}*E${x.row}`).join('+')})/C${summaryRow},"")`;
+      putFormula(s, summaryRow - 1, 4, physFormula, +phys.toFixed(6));
+    }
+    if (phys !== null) putFormula(s, summaryRow - 1, 5, `=IF(OR(D${summaryRow}="",E${summaryRow}=""),"",D${summaryRow}*E${summaryRow}/100)`, weight!==null?+(weight*phys/100).toFixed(6):'');
+    putFormula(s, summaryRow - 1, 7, `=IF(OR(C${summaryRow}="",G${summaryRow}="",C${summaryRow}=0),"",G${summaryRow}/C${summaryRow}*100)`, rate===null?'':+rate.toFixed(6));
+    putFormula(s, summaryRow - 1, 8, `=IF(OR(H${summaryRow}="",D${summaryRow}=""),"",H${summaryRow}*D${summaryRow}/100)`, rate!==null&&weight!==null?+(rate*weight/100).toFixed(6):'');
+    putFormula(s, summaryRow - 1, 9, `=IF(OR(C${summaryRow}="",G${summaryRow}=""),"",C${summaryRow}-G${summaryRow})`, parentBudget!==null&&g.fin!==null?parentBudget-g.fin:'');
 
-  putFormula(s,44,2,'=C10',totalBudget||'');
-  putFormula(s,44,6,'=G10',totalFin||'');
-  putFormula(s,44,7,'=IF(C45=0,\"\",G45/C45*100)',tr===null?'':+tr.toFixed(6));
-  putFormula(s,44,9,'=IF(OR(C45=\"\",G45=\"\"),\"\",C45-G45)',totalBudget-totalFin);
+    for (let rr = summaryRow + 1; rr < g.next; rr++) {
+      const row = rows[rr - 1] || [];
+      const b = parseNumber(row[2]), p = parseNumber(row[4]), fin = parseNumber(row[6]);
+      if (cleanText(row[1]) === '' || (b === null && p === null && fin === null)) continue;
+      const d = parentBudget !== null && parentBudget !== 0 && b !== null ? b/parentBudget*100 : null;
+      const h = b !== null && b !== 0 && fin !== null ? fin/b*100 : null;
+      putFormula(s, rr-1, 3, `=IF(OR($C$${summaryRow}=0,C${rr}=""),"",C${rr}/$C$${summaryRow}*100)`, d===null?'':+d.toFixed(6));
+      putFormula(s, rr-1, 5, `=IF(OR(D${rr}="",E${rr}=""),"",D${rr}*E${rr}/100)`, d!==null&&p!==null?+(d*p/100).toFixed(6):'');
+      putFormula(s, rr-1, 7, `=IF(OR(C${rr}="",G${rr}="",C${rr}=0),"",G${rr}/C${rr}*100)`, h===null?'':+h.toFixed(6));
+      putFormula(s, rr-1, 8, `=IF(OR(H${rr}="",D${rr}=""),"",H${rr}*D${rr}/100)`, h!==null&&d!==null?+(h*d/100).toFixed(6):'');
+      putFormula(s, rr-1, 9, `=IF(OR(C${rr}="",G${rr}=""),"",C${rr}-G${rr})`, b!==null&&fin!==null?b-fin:'');
+    }
+  }
+
+  // Office totals: only sum top-level program summaries. Never sum children here.
+  if (officeRow > 0 && rows[officeRow-1]) {
+    const budgetFormula = top.length ? `=SUM(${top.map(g=>`C${g.summary}`).join(',')})` : '=0';
+    const finFormula = top.length ? `=SUM(${top.map(g=>`G${g.summary}`).join(',')})` : '=0';
+    putFormula(s, officeRow-1, 2, budgetFormula, totalBudget || '');
+    putFormula(s, officeRow-1, 3, `=IF(C${officeRow}=0,"",100)`, totalBudget ? 100 : '');
+    const officePhys = parseNumber((rows[officeRow-1]||[])[4]);
+    const phys = officePhys !== null ? officePhys : info.physicalRate;
+    if (officePhys === null && top.length && phys !== null) {
+      const expr = top.map(g=>`C${g.summary}*E${g.summary}`).join('+');
+      putFormula(s, officeRow-1, 4, `=IFERROR((${expr})/C${officeRow},"")`, +phys.toFixed(6));
+    }
+    if (phys !== null) putFormula(s, officeRow-1, 5, `=IF(OR(D${officeRow}="",E${officeRow}=""),"",D${officeRow}*E${officeRow}/100)`, +phys.toFixed(6));
+    putFormula(s, officeRow-1, 6, finFormula, totalFin || '');
+    const tr = totalBudget ? totalFin/totalBudget*100 : null;
+    putFormula(s, officeRow-1, 7, `=IF(C${officeRow}=0,"",G${officeRow}/C${officeRow}*100)`, tr===null?'':+tr.toFixed(6));
+    putFormula(s, officeRow-1, 8, `=IF(OR(H${officeRow}="",D${officeRow}=""),"",H${officeRow}*D${officeRow}/100)`, tr===null?'':+tr.toFixed(6));
+    putFormula(s, officeRow-1, 9, `=IF(OR(C${officeRow}="",G${officeRow}=""),"",C${officeRow}-G${officeRow})`, totalBudget-totalFin);
+  }
+  if (totalRow > 0 && rows[totalRow-1]) {
+    putFormula(s, totalRow-1, 2, `=C${officeRow}`, totalBudget || '');
+    putFormula(s, totalRow-1, 6, `=G${officeRow}`, totalFin || '');
+    const tr = totalBudget ? totalFin/totalBudget*100 : null;
+    putFormula(s, totalRow-1, 7, `=IF(C${totalRow}=0,"",G${totalRow}/C${totalRow}*100)`, tr===null?'':+tr.toFixed(6));
+    putFormula(s, totalRow-1, 9, `=IF(OR(C${totalRow}="",G${totalRow}=""),"",C${totalRow}-G${totalRow})`, totalBudget-totalFin);
+  }
 }
 
 function recalculatePayload(payload) { const out=clone(payload); for(const name of Object.keys(out.sheets||{})) applyAutoCalculations(out,name); return out; }
@@ -427,7 +495,7 @@ function dataCompleteness(sheet) {
 function sheetStats(name, sheet) {
   const meta=sheetMeta[name]||{}; const values=sheet?.values||[]; const start=meta.dataStart??3; const rows=values.slice(start); const achievement=[]; const budget=[]; let target=0, realized=0, budgetTotal=0, budgetRealized=0;
   if(meta.target!==undefined){ for(const r of rows){ const t=parseNumber(r?.[meta.target]), a=parseNumber(r?.[meta.real]); if(t!==null) target++; if(t!==null&&a!==null&&t!==0) achievement.push(a/t*100); if(a!==null) realized++; const b=parseNumber(r?.[meta.budget]), br=parseNumber(r?.[meta.budgetReal]); if(b!==null) budgetTotal+=b; if(br!==null) budgetRealized+=br; if(b!==null&&br!==null&&b!==0) budget.push(br/b*100); } }
-  if(name==='Realisasi Fisik & Keu'){ const groups=[Array.from({length:13},(_,i)=>12+i),Array.from({length:14},(_,i)=>27+i),[42]]; const summary=[11,26,41]; const lines=[]; groups.forEach((details,i)=>{ const sr=summary[i]; let b=parseNumber(values[sr-1]?.[2]); let f=parseNumber(values[sr-1]?.[6]); if(i===0 && b===null) b=details.reduce((a,rr)=>a+(parseNumber(values[rr-1]?.[2])||0),0); if(i===0 && f===null) f=details.reduce((a,rr)=>a+(parseNumber(values[rr-1]?.[6])||0),0); if(b!==null) budgetTotal+=b; if(f!==null) budgetRealized+=f; if(b!==null&&f!==null&&b!==0) budget.push(f/b*100); details.forEach(rr=>{const p=parseNumber(values[rr-1]?.[4]); if(p!==null) achievement.push(p);}); }); }
+  if(name==='Realisasi Fisik & Keu'){ const info=getRealisasiTotals(values); budgetTotal=info.budgetTotal; budgetRealized=info.financialTotal; if(info.physicalRate!==null) achievement.push(info.physicalRate); if(info.budgetTotal>0 && info.financialTotal!==null) budget.push(info.financialRate); }
   const monev=[]; if(meta.targetCols&&meta.realCols) rows.forEach(r=>{let t=0,a=0,has=false; meta.targetCols.forEach((c,i)=>{const tv=parseNumber(r?.[c]),av=parseNumber(r?.[meta.realCols[i]]);if(tv!==null&&av!==null&&tv!==0){t+=tv;a+=av;has=true;}});if(has&&t) monev.push(a/t*100);});
   if(monev.length) achievement.splice(0,achievement.length,...monev);
   const average=achievement.length?achievement.reduce((a,b)=>a+b,0)/achievement.length:null; const budgetAverage=budget.length?budget.reduce((a,b)=>a+b,0)/budget.length:(budgetTotal?budgetRealized/budgetTotal*100:null);
@@ -440,16 +508,69 @@ function applyAutoCalculations(payload, name) {
 }
 function derive(payload){
   const sheets=payload.sheets||{}, stats=Object.entries(sheets).map(([name,s])=>({name,...sheetStats(name,s)}));
-  const rf=sheets['Realisasi Fisik & Keu']?.values||[]; const detailRows=[...Array.from({length:13},(_,i)=>11+i),...Array.from({length:14},(_,i)=>26+i),42];
-  const details=detailRows.map(rr=>rf[rr-1]||[]); const budgetTotal=details.reduce((a,r)=>a+(parseNumber(r[2])||0),0); const financialTotal=details.reduce((a,r)=>a+(parseNumber(r[6])||0),0); const financialRate=budgetTotal?financialTotal/budgetTotal*100:0;
-  const physicalPairs=details.map(r=>({b:parseNumber(r[2]),p:parseNumber(r[4])})).filter(x=>x.b!==null&&x.p!==null); const physical=physicalPairs.map(x=>x.p); const physicalRate=physicalPairs.length?physicalPairs.reduce((a,x)=>a+x.b*x.p,0)/physicalPairs.reduce((a,x)=>a+x.b,0):0; const weightedPhysical=physicalRate;
-  const pk=sheets['Rekap realisasi PKPT']?.values||[]; const pkItems=pk.slice(6,92).filter(r=>cleanText(r?.[3])); const status=pkItems.map(r=>cleanText(r?.[4]).toLowerCase()); const done=status.filter(v=>v==='sudah'||v.includes('selesai')).length; const progress=status.filter(v=>v.includes('berjalan')||v.includes('proses')).length; const pending=status.filter(v=>v.includes('belum')||!v).length; const pkptOther=Math.max(0,pkItems.length-done-progress-pending);
+  const rf=sheets['Realisasi Fisik & Keu']?.values||[];
+  const rfInfo=getRealisasiTotals(rf);
+  const budgetTotal=rfInfo.budgetTotal;
+  const financialTotal=rfInfo.financialTotal;
+  const financialRate=rfInfo.financialRate;
+  const physicalRate=rfInfo.physicalRate;
+
+  // Physical sample count only uses detail rows, never the program summaries or office total.
+  const physicalPairs=[];
+  for(const g of rfInfo.top){
+    for(let rr=g.summary+1; rr<g.next; rr++){
+      const r=rf[rr-1]||[];
+      const b=parseNumber(r[2]), p=parseNumber(r[4]);
+      if(cleanText(r[1])!=='' && b!==null && p!==null) physicalPairs.push({b,p});
+    }
+  }
+  const physicalRowsCount=physicalPairs.length;
+  const weightedPhysical=physicalRate;
+
+  // PKPT status section ends before the "REALISASI OUTPUT PENUGASAN / SATUAN HASIL" section.
+  const pk=sheets['Rekap realisasi PKPT']?.values||[];
+  const outputHeader=pk.findIndex(r=>cleanText(r?.[1]).toUpperCase().includes('REALISASI OUTPUT PENUGASAN'));
+  const statusEnd=outputHeader>0?outputHeader:pk.length;
+  const pkItems=pk.slice(6,statusEnd).filter(r=>cleanText(r?.[3]));
+  const status=pkItems.map(r=>cleanText(r?.[4]).toLowerCase());
+  const done=status.filter(v=>v==='sudah'||v.includes('selesai')).length;
+  const progress=status.filter(v=>v.includes('berjalan')||v.includes('proses')).length;
+  const pending=status.filter(v=>v.includes('belum')||!v).length;
+  const pkptOther=Math.max(0,pkItems.length-done-progress-pending);
   const pkptCompletionValues=pkItems.map(r=>{const t=parseNumber(r?.[9]),a=parseNumber(r?.[11]); return t!==null&&a!==null&&t!==0?a/t*100:null}).filter(v=>v!==null);
   const pkptCompletion=pkptCompletionValues.length?pkptCompletionValues.reduce((a,b)=>a+b,0)/pkptCompletionValues.length:null;
-  const outU=sheets['Monev output Subkegiatan Utama']?.values||[], outP=sheets['Monev Subkegiatan Penunjang']?.values||[]; const outputUtama=outU.slice(6).filter(r=>cleanText(r?.[7]).startsWith('#')).length; const outputPenunjang=outP.slice(6).filter(r=>cleanText(r?.[7]).startsWith('#')).length;
-  const formulaInfo=formulaAudit(payload); const capaianNames=['Capaian Sasaran Strategis','Capaian Sasaran Program','Capaian Sasaran Kegiatan Utama','Capaian Sasaran Kegiatan(Penun)','Capaian Sasaran SUBKegiatan(U)','Capaian Sasaran SUBKegiatan (P)']; const capaianCards=capaianNames.map(name=>({name,...sheetStats(name,sheets[name])})); const overallCompleteness=stats.length?stats.reduce((a,b)=>a+b.completeness,0)/stats.length:0; const av=capaianCards.filter(x=>x.average!==null); const avgCapaian=av.length?av.reduce((a,b)=>a+b.average,0)/av.length:null;
-  const monevNames=['Monev Renaksi IKU','Monev Program']; const monevRates=monevNames.map(name=>{const st=sheetStats(name,sheets[name]);return {name,rate:st.average,budgetRate:st.budgetAverage}});
-  return {stats,budgetTotal,financialTotal,financialRate,physicalRate,physicalRowsCount:physical.length,weightedPhysical,pkptCount:pkItems.length,done,progress,pending,pkptOther,pkptCompletion,outputUtama,outputPenunjang,errorCount:formulaInfo.errors,externalFormulaCount:formulaInfo.external,formulaCount:formulaInfo.formulaCount,capaianCards,overallCompleteness,avgCapaian,monevRates,formulaIssues:formulaInfo.issues};
+
+  const outU=sheets['Monev output Subkegiatan Utama']?.values||[];
+  const outP=sheets['Monev Subkegiatan Penunjang']?.values||[];
+  const outputUtama=outU.slice(6).filter(r=>cleanText(r?.[7]).startsWith('#')).length;
+  const outputPenunjang=outP.slice(6).filter(r=>cleanText(r?.[7]).startsWith('#')).length;
+
+  const formulaInfo=formulaAudit(payload);
+  const capaianNames=['Capaian Sasaran Strategis','Capaian Sasaran Program','Capaian Sasaran Kegiatan Utama','Capaian Sasaran Kegiatan(Penun)','Capaian Sasaran SUBKegiatan(U)','Capaian Sasaran SUBKegiatan (P)'];
+  const capaianCards=capaianNames.map(name=>({name,...sheetStats(name,sheets[name])}));
+  const overallCompleteness=stats.length?stats.reduce((a,b)=>a+b.completeness,0)/stats.length:0;
+  const av=capaianCards.filter(x=>x.average!==null);
+  const avgCapaian=av.length?av.reduce((a,b)=>a+b.average,0)/av.length:null;
+  const monevNames=['Monev Renaksi IKU','Monev Program'];
+  const monevRates=monevNames.map(name=>{const st=sheetStats(name,sheets[name]);return {name,rate:st.average,budgetRate:st.budgetAverage}});
+
+  return {
+    stats,budgetTotal,financialTotal,financialRate,physicalRate,
+    physicalRowsCount,weightedPhysical,pkptCount:pkItems.length,done,progress,pending,pkptOther,pkptCompletion,
+    outputUtama,outputPenunjang,errorCount:formulaInfo.errors,externalFormulaCount:formulaInfo.external,formulaCount:formulaInfo.formulaCount,
+    capaianCards,overallCompleteness,avgCapaian,monevRates,formulaIssues:formulaInfo.issues,
+    calculationAudit:{
+      realisasiSource:'Realisasi Fisik & Keu',
+      budgetBasis:'Office total C10 / fallback sum of top-level program summary rows only',
+      financialBasis:'Office total G10 / fallback sum of top-level program summary rows only',
+      doubleCountProtection:true,
+      officeRow:rfInfo.officeRow,
+      totalRow:rfInfo.totalRow,
+      topProgramRows:rfInfo.programRows,
+      topProgramBudgets:rfInfo.top.map(g=>g.budget),
+      topProgramFinancials:rfInfo.top.map(g=>g.fin)
+    }
+  };
 }
 function prepareImportedForMode(imported,current,mapping,mode,targetYear){
   if(mode==='merge'){
@@ -543,8 +664,8 @@ function Dashboard({ derived, year, onNav, onSheet }) {
 function KPI({ t, v, s, p, tone, onClick, metricKey }) { const isMoney = metricKey === 'budget' || metricKey === 'financial'; return <button type="button" className={`kpi ${tone} ${isMoney ? 'kpi-money' : ''}`} onClick={onClick}><div className="shine"></div><div className="kpi-top"><span>{t}</span><i>↗</i></div>{isMoney ? <div className="money-display" title={v}><span>Rp</span><b>{v.replace(/^Rp\s*/,'')}</b></div> : <strong title={v}>{v}</strong>}<small>{s}</small>{p !== undefined && <div className="meter"><i style={{ width: `${Math.max(0, Math.min(100, p || 0))}%` }}></i></div>}<span className="kpi-click-hint">Klik untuk detail</span></button>; }
 function KPIDetailModal({ type, derived, onClose, onNav, onSheet }) {
   const map = {
-    budget: { title: 'Total Anggaran', subtitle: 'Akumulasi anggaran valid dari seluruh baris numerik pada Realisasi Fisik & Keu.', value: money(derived.budgetTotal), tone: 'gold', facts: [['Sumber', 'Realisasi Fisik & Keu'], ['Baris valid', number(derived.physicalRowsCount)], ['Realisasi', money(derived.financialTotal)], ['Sisa dana', money(Math.max(0, derived.budgetTotal - derived.financialTotal))]], action: 'realisasi' },
-    financial: { title: 'Realisasi Keuangan', subtitle: 'Jumlah realisasi keuangan yang terbaca valid dan digunakan untuk menghitung serapan.', value: money(derived.financialTotal), tone: 'blue', facts: [['Anggaran', money(derived.budgetTotal)], ['Serapan', pct(derived.financialRate)], ['Sisa dana', money(Math.max(0, derived.budgetTotal - derived.financialTotal))], ['Sumber', 'Realisasi Fisik & Keu']], action: 'realisasi' },
+    budget: { title: 'Total Anggaran', subtitle: 'Total anggaran Inspektorat dari baris total/summary program; detail anak tidak dijumlahkan lagi.', value: money(derived.budgetTotal), tone: 'gold', facts: [['Sumber', 'Realisasi Fisik & Keu'], ['Baris valid', number(derived.physicalRowsCount)], ['Realisasi', money(derived.financialTotal)], ['Sisa dana', money(Math.max(0, derived.budgetTotal - derived.financialTotal))]], action: 'realisasi' },
+    financial: { title: 'Realisasi Keuangan', subtitle: 'Total realisasi keuangan dari baris total/summary program; detail anak tidak dijumlahkan lagi.', value: money(derived.financialTotal), tone: 'blue', facts: [['Anggaran', money(derived.budgetTotal)], ['Serapan', pct(derived.financialRate)], ['Sisa dana', money(Math.max(0, derived.budgetTotal - derived.financialTotal))], ['Sumber', 'Realisasi Fisik & Keu']], action: 'realisasi' },
     financialRate: { title: 'Serapan Keuangan', subtitle: 'Realisasi keuangan dibandingkan anggaran pada tahun aktif.', value: pct(derived.financialRate), tone: 'mint', progress: derived.financialRate, facts: [['Rumus', 'Realisasi ÷ Anggaran × 100'], ['Anggaran', money(derived.budgetTotal)], ['Realisasi', money(derived.financialTotal)], ['Sisa', money(Math.max(0, derived.budgetTotal - derived.financialTotal))]], action: 'realisasi' },
     physical: { title: 'Rata-rata Realisasi Fisik', subtitle: 'Rata-rata nilai fisik yang terisi dan valid pada Realisasi Fisik & Keu.', value: pct(derived.physicalRate), tone: 'teal', progress: derived.physicalRate, facts: [['Sampel valid', number(derived.physicalRowsCount)], ['Rata-rata', pct(derived.physicalRate)], ['Sumber', 'Realisasi Fisik & Keu'], ['Bobot terhitung', pct(derived.weightedPhysical)]], action: 'realisasi' },
     pkpt: { title: 'Penugasan PKPT', subtitle: 'Rekap status penugasan yang teridentifikasi pada kertas kerja PKPT.', value: number(derived.pkptCount), tone: 'violet', facts: [['Selesai', number(derived.done)], ['Berjalan', number(derived.progress)], ['Belum', number(derived.pending)], ['Lainnya', number(derived.pkptOther)]], action: 'penugasan' },
