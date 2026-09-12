@@ -1,7 +1,7 @@
 {
   "name": "dashboard-realisasi-kinerja-mahakam-ulu",
   "private": true,
-  "version": "8.0.0-pre-google-api",
+  "version": "8.1.0-pre-google-api",
   "type": "module",
   "scripts": {
     "dev": "vite",
