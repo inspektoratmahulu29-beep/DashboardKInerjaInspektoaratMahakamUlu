@@ -1,3 +1,12 @@
+## V8.1.3 Calculation Safety Patch
+
+Perbaikan penting: KPI Total Anggaran dan Total Realisasi Keuangan kini hanya menggunakan total kantor/summary program tingkat atas, bukan menjumlahkan baris induk + detail sekaligus. Ini mencegah double-counting. Struktur import tetap fleksibel.
+
+Target 2026 pada workbook master yang digunakan untuk validasi:
+- Anggaran: Rp 17.588.768.787
+- Realisasi Keuangan: Rp 15.986.004.220
+- Serapan: 90,887568%
+
 # Dashboard Realisasi Kinerja — Inspektorat Daerah Kabupaten Mahakam Ulu
 
 Baseline V8 tanpa Google Sheets API/database pusat. Source ini mengikuti workbook `2026_Dashboard_Kertas_Kerja_Inspektorat_Mahakam_Ulu_FULL_REVISI.xlsx` dan mempertahankan 14 sheet kertas kerja.
