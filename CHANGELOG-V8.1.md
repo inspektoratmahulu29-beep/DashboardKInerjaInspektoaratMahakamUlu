@@ -37,3 +37,5 @@
 - Mengisi formula turunan D/F/H/I/J secara konsisten pada baris detail.
 - Menyinkronkan formula capaian % dan % realisasi anggaran pada sheet capaian yang terisi.
 - Import Excel menetralkan formula E detail yang salah dan mempertahankan nilai inputnya.
+
+- V8.1.4: recovery sheet kosong dari sumber, proteksi replace import terhadap sheet kosong/missing, dan metadata input/output monev diperjelas.
