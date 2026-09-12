@@ -56,3 +56,9 @@ V8.1 adds a guarded Excel import pipeline designed for the Mahakam Ulu kertas ke
 - flexible year detection and normalization
 
 The website remains local/offline in this V8.1 baseline; no Google API is included.
+
+
+## V8.1.4 — Empty Sheet Recovery
+- Memulihkan sheet yang tersimpan kosong dari workbook sumber saat startup tanpa menimpa sheet yang sudah berisi data operator.
+- Import active-year mempertahankan sheet lama yang tidak ada/bermasalah di file import dan hanya mengganti sheet import yang valid serta tidak kosong.
+- Monev output utama/penunjang menggunakan kolom input workbook yang benar untuk KPI.
