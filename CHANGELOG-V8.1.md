@@ -24,3 +24,10 @@
 - localStorage hanya dipakai untuk metadata kecil (tahun aktif) dan migrasi legacy.
 - Memperbaiki kegagalan import saat browser mencapai kuota localStorage.
 - Rollback import sekarang asynchronous dan aman terhadap database besar.
+
+## V8.1.2 — Calculation Fix
+- Fixed dashboard double-counting in Total Anggaran and Total Realisasi Keuangan.
+- KPI totals now use office total/top-level program summaries only.
+- Added dynamic Realisasi structure detection and calculation audit metadata.
+- PKPT status range now stops before output summary section.
+- Added CALCULATION-AUDIT-V8.1.2.md.
