@@ -39,3 +39,11 @@
 - Import Excel menetralkan formula E detail yang salah dan mempertahankan nilai inputnya.
 
 - V8.1.4: recovery sheet kosong dari sumber, proteksi replace import terhadap sheet kosong/missing, dan metadata input/output monev diperjelas.
+
+
+## V8.1.5 — Duplicate Sheet & Import Mapping Fix
+- Canonicalizes duplicate/alias sheet entries against the 14 canonical workbook sheet names at startup.
+- Preserves the richest duplicate and merges missing non-empty cells from aliases.
+- Prevents stale IndexedDB entries from inflating the sheet count (e.g. 17 instead of 14).
+- Canonicalizes imported workbook sheet names before schema mapping and new-year creation.
+- Resets selected sheet to a valid canonical sheet after database repair.
