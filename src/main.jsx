@@ -67,22 +67,22 @@ function App(){
     {id:'output',label:'Total Output',value:num((k.outputUtama||0)+(k.outputPenunjang||0)),note:`Utama ${num(k.outputUtama)} • Penunjang ${num(k.outputPenunjang)}`,icon:'▦',tone:'rose'}
   ],[k]);
 
-  const sourceTitle=tab==='dashboard'?'Pusat Kendali Realisasi Kinerja':tab==='realisasi'?'Realisasi Fisik & Keuangan':tab==='kinerja'?'Kinerja & Monitoring':'Penugasan & Output';
+  const sourceTitle=tab==='dashboard'?'SISTEM INFORMASI KINERJA DAN PENGAWASAN':tab==='realisasi'?'Realisasi Fisik & Keuangan':tab==='kinerja'?'Kinerja & Monitoring':'Penugasan & Output';
 
   return <div className="app">
     <header className="topbar">
       <div className="brand-wrap">
         <div className="logo-pair">
-          <div className="logo-stack logo-stack-mahakam">
+          <div className="logo-with-label">
             <div className="logo-frame"><img src="/assets/logo-mahakam-ulu.png" alt="Lambang Kabupaten Mahakam Ulu" /></div>
-            <span className="logo-sikap" aria-label="SIKAP">SIKAP</span>
+            <span className="logo-label-sikap">SIKAP</span>
           </div>
           <div className="logo-frame logo-ins"><img src="/assets/logo-inspektorat.png" alt="Logo Inspektorat Kabupaten Mahakam Ulu" /></div>
         </div>
         <div className="brand-copy">
           <div className="brand-kicker">PEMERINTAH KABUPATEN MAHAKAM ULU</div>
           <b>INSPEKTORAT DAERAH</b>
-          <span>Dashboard Realisasi Kinerja & Pengawasan</span>
+          <span>(SIKAP) SISTEM INFORMASI KINERJA DAN PENGAWASAN</span>
         </div>
       </div>
       <div className="top-actions">
@@ -128,7 +128,7 @@ function App(){
           {tab==='kinerja'&&<Kinerja k={k}/>} 
           {tab==='penugasan'&&<Penugasan k={k}/>} 
         </>}
-        <footer>© {year} Inspektorat Daerah Kabupaten Mahakam Ulu • Dashboard Realisasi Kinerja</footer>
+        <footer>© {year} Inspektorat Daerah Kabupaten Mahakam Ulu • (SIKAP) Sistem Informasi Kinerja dan Pengawasan</footer>
       </main>
     </div>
     {activeKpi&&<KpiModal kpi={activeKpi} k={k} onClose={()=>setActiveKpi(null)}/>} 
@@ -150,8 +150,8 @@ function LoadingScreen({progress=0}){
           <img className="loading-logo" src="/assets/favicon.png" alt="Logo Inspektorat"/>
         </div>
       </div>
-      <div className="loading-brand">INSPEKTORAT DAERAH</div>
-      <h2>Dashboard Realisasi Kinerja</h2>
+      <div className="loading-brand">INSPEKTORAT DAERAH KABUPATEN MAHAKAM ULU</div>
+      <h2>(SIKAP) SISTEM INFORMASI KINERJA DAN PENGAWASAN</h2>
       <p>{status}</p>
       <div className="loading-progress">
         <div className="loading-progress-head"><span>MEMUAT DATA</span><strong>{p}%</strong></div>
