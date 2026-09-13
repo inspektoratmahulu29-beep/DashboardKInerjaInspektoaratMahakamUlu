@@ -17,3 +17,7 @@ Untuk workbook yang dilampirkan, hasil yang diharapkan adalah sekitar **86.43838
 Cache key API dinaikkan ke `v=11.2` agar snapshot fisik 0 dari versi sebelumnya tidak terbawa.
 
 Deploy Web 2 hasil patch ini lalu refresh browser. Tidak perlu mengubah Web 1.
+
+
+## V11.3 — FIX FINAL FORMULA E=0 STALE
+Pada Google Sheets, kolom E dapat dikembalikan sebagai angka 0 meskipun formula belum/render stale, sedangkan H sudah berisi persentase valid. Karena template Web 1 mendefinisikan E secara aljabar sama dengan H (E=I/D*100 dan I=H*D/100), Web 2 V11.3 memprioritaskan H pada detail/program/kantor, lalu E sebagai fallback. Cache key dinaikkan ke v=11.3 agar snapshot 0 dari V11.2 tidak terbawa.
