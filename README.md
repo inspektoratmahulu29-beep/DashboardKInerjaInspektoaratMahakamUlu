@@ -59,3 +59,9 @@ Share spreadsheet pusat kepada `client_email` dari Service Account dengan minima
 
 ## Sinkronisasi
 Dashboard mengambil data saat dibuka lalu melakukan refresh sekitar setiap 3 detik. Cache respons backend dibatasi pendek sehingga tetap ringan.
+
+## V11 production hardening
+Dashboard publik menggunakan rentang Google Sheets yang lebih kecil, token cache, retry/timeout, edge snapshot, ETag/304, dan single-flight per tahun untuk menahan lonjakan viewer.
+
+Sebelum deploy, jalankan:
+`node scripts/check-backend.mjs`
