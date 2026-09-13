@@ -5,7 +5,9 @@ const CANONICAL = [
   'Monev Renaksi IKU','Monev Program','Monev output Subkegiatan Utama','Monev Subkegiatan Penunjang',
   'Rekap realisasi PKPT','Realisasi Fisik & Keu'
 ];
-export async function onRequestGet({env}){
+export async function onRequestGet({request,env}){
+  const cache=caches.default; const key=new Request(`${new URL(request.url).origin}/__cache/public-years?v=11`);
+  const cached=await cache.match(key); if(cached) return new Response(cached.body,cached);
   try{
     const titles=await getSheetTitles(env);
     const years=new Set();
@@ -14,6 +16,6 @@ export async function onRequestGet({env}){
       if(m) years.add(Number(m[1]));
       else if(CANONICAL.includes(t)) years.add(2026);
     }
-    return Response.json({ok:true,years:[...years].sort((a,b)=>b-a)});
+    const response=Response.json({ok:true,years:[...years].sort((a,b)=>b-a)},{headers:{'cache-control':'public,max-age=60,s-maxage=300','x-years-cache':'MISS'}}); await cache.put(key,response.clone()); return response;
   }catch(e){ return Response.json({ok:false,code:'GOOGLE_SHEETS_UNAVAILABLE'}, {status:503});}
 }
