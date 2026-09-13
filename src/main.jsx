@@ -8,31 +8,34 @@ const pct=n=>`${(Number(n)||0).toLocaleString('id-ID',{maximumFractionDigits:1})
 const clamp=(n,min=0,max=100)=>Math.max(min,Math.min(max,Number(n)||0));
 
 function App(){
-  const [data,setData]=useState(null),[error,setError]=useState(''),[loading,setLoading]=useState(true),[year,setYear]=useState(2026),[years,setYears]=useState([2026]),[tab,setTab]=useState('dashboard'),[activeKpi,setActiveKpi]=useState(null),[pulse,setPulse]=useState(0),[lastSync,setLastSync]=useState(null),[syncState,setSyncState]=useState('connecting');
+  const [data,setData]=useState(null),[error,setError]=useState(''),[loading,setLoading]=useState(true),[loadProgress,setLoadProgress]=useState(8),[year,setYear]=useState(2026),[years,setYears]=useState([2026]),[tab,setTab]=useState('dashboard'),[activeKpi,setActiveKpi]=useState(null),[pulse,setPulse]=useState(0),[lastSync,setLastSync]=useState(null),[syncState,setSyncState]=useState('connecting');
   const etagRef=React.useRef('');
   const requestRef=React.useRef(null);
 
   const load=async()=>{
     if(requestRef.current) return;
+    setLoadProgress(v=>Math.max(v,18));
     const controller=new AbortController();
     requestRef.current=controller;
     const timer=setTimeout(()=>controller.abort(),12000);
     try{
+      setLoadProgress(v=>Math.max(v,32));
       const headers={};
       if(etagRef.current) headers['If-None-Match']=etagRef.current;
       const r=await fetch(`/api/public/dashboard?year=${year}&v=12.2`,{headers,cache:'no-store',signal:controller.signal});
       if(r.status===304){setError('');setSyncState('live');return;}
       const j=await r.json();
+      setLoadProgress(v=>Math.max(v,78));
       if(!r.ok) throw new Error(j.message||j.error||`HTTP ${r.status}`);
       const tag=r.headers.get('etag'); if(tag) etagRef.current=tag;
-      setData(j);setError('');setLastSync(new Date());setSyncState(r.headers.get('x-dashboard-cache')==='STALE'?'stale':'live');
+      setData(j);setLoadProgress(100);setError('');setLastSync(new Date());setSyncState(r.headers.get('x-dashboard-cache')==='STALE'?'stale':'live');
     }catch(e){
       // Keep the last good snapshot visible so public viewers do not see a blank
       // dashboard during a short Google/Internet outage.
       setSyncState('offline');
       if(!data) setError(e.name==='AbortError'?'Koneksi sumber data terlalu lambat.':'Data belum dapat ditampilkan.');
     }finally{
-      clearTimeout(timer);requestRef.current=null;setLoading(false);
+      clearTimeout(timer);requestRef.current=null;setLoadProgress(100);setTimeout(()=>setLoading(false),260);
     }
   };
 
@@ -116,7 +119,7 @@ function App(){
           </div>
         </section>
 
-        {loading&&!data?<div className="loading panel"><div className="loader"/><span>Mengambil data realisasi kinerja…</span></div>:error&&!data?<div className="error panel"><b>Data belum dapat ditampilkan</b><span>{error}</span><button onClick={load}>Muat kembali</button></div>:<>
+        {loading&&!data?<LoadingScreen progress={loadProgress}/>:error&&!data?<div className="error panel"><b>Data belum dapat ditampilkan</b><span>{error}</span><button onClick={load}>Muat kembali</button></div>:<>
           {tab==='dashboard'&&<Dashboard cards={cards} k={k} data={data} onKpi={setActiveKpi}/>} 
           {tab==='realisasi'&&<Realisasi k={k} onKpi={setActiveKpi}/>} 
           {tab==='kinerja'&&<Kinerja k={k}/>} 
@@ -126,6 +129,33 @@ function App(){
       </main>
     </div>
     {activeKpi&&<KpiModal kpi={activeKpi} k={k} onClose={()=>setActiveKpi(null)}/>} 
+  </div>
+}
+
+
+function LoadingScreen({progress=0}){
+  const p=Math.max(0,Math.min(100,Math.round(progress)));
+  const status=p<25?'Menyiapkan dashboard…':p<55?'Menghubungkan sumber data…':p<85?'Memuat data kinerja…':p<100?'Menyiapkan tampilan…':'Dashboard siap';
+  return <div className="loading-screen" role="status" aria-live="polite" aria-label={`Memuat dashboard ${p} persen`}>
+    <div className="loading-shell">
+      <div className="loading-orbit">
+        <div className="loading-ring ring-a"/>
+        <div className="loading-ring ring-b"/>
+        <div className="loading-ring ring-c"/>
+        <div className="loading-logo-wrap">
+          <span className="loading-logo-glow"/>
+          <img className="loading-logo" src="/assets/favicon.png" alt="Logo Inspektorat"/>
+        </div>
+      </div>
+      <div className="loading-brand">INSPEKTORAT DAERAH</div>
+      <h2>Dashboard Realisasi Kinerja</h2>
+      <p>{status}</p>
+      <div className="loading-progress">
+        <div className="loading-progress-head"><span>MEMUAT DATA</span><strong>{p}%</strong></div>
+        <div className="loading-track"><i style={{width:`${p}%`}}/></div>
+      </div>
+      <div className="loading-meta"><span><i/>Sinkronisasi sumber</span><span>TA 2026</span></div>
+    </div>
   </div>
 }
 
