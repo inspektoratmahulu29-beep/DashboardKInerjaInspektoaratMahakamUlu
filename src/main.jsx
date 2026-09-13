@@ -8,16 +8,32 @@ const pct=n=>`${(Number(n)||0).toLocaleString('id-ID',{maximumFractionDigits:1})
 const clamp=(n,min=0,max=100)=>Math.max(min,Math.min(max,Number(n)||0));
 
 function App(){
-  const [data,setData]=useState(null),[error,setError]=useState(''),[loading,setLoading]=useState(true),[year,setYear]=useState(2026),[years,setYears]=useState([2026]),[tab,setTab]=useState('dashboard'),[activeKpi,setActiveKpi]=useState(null),[pulse,setPulse]=useState(0),[lastSync,setLastSync]=useState(null);
+  const [data,setData]=useState(null),[error,setError]=useState(''),[loading,setLoading]=useState(true),[year,setYear]=useState(2026),[years,setYears]=useState([2026]),[tab,setTab]=useState('dashboard'),[activeKpi,setActiveKpi]=useState(null),[pulse,setPulse]=useState(0),[lastSync,setLastSync]=useState(null),[syncState,setSyncState]=useState('connecting');
+  const etagRef=React.useRef('');
+  const requestRef=React.useRef(null);
 
   const load=async()=>{
+    if(requestRef.current) return;
+    const controller=new AbortController();
+    requestRef.current=controller;
+    const timer=setTimeout(()=>controller.abort(),12000);
     try{
-      setLoading(true);
-      const r=await fetch(`/api/public/dashboard?year=${year}`,{cache:'no-store'});
+      const headers={};
+      if(etagRef.current) headers['If-None-Match']=etagRef.current;
+      const r=await fetch(`/api/public/dashboard?year=${year}`,{headers,cache:'no-store',signal:controller.signal});
+      if(r.status===304){setError('');setSyncState('live');return;}
       const j=await r.json();
       if(!r.ok) throw new Error(j.message||j.error||`HTTP ${r.status}`);
-      setData(j);setError('');setLastSync(new Date());
-    }catch(e){setError(e.message)}finally{setLoading(false)}
+      const tag=r.headers.get('etag'); if(tag) etagRef.current=tag;
+      setData(j);setError('');setLastSync(new Date());setSyncState(r.headers.get('x-dashboard-cache')==='STALE'?'stale':'live');
+    }catch(e){
+      // Keep the last good snapshot visible so public viewers do not see a blank
+      // dashboard during a short Google/Internet outage.
+      setSyncState('offline');
+      if(!data) setError(e.name==='AbortError'?'Koneksi sumber data terlalu lambat.':'Data belum dapat ditampilkan.');
+    }finally{
+      clearTimeout(timer);requestRef.current=null;setLoading(false);
+    }
   };
 
   useEffect(()=>{
@@ -28,10 +44,14 @@ function App(){
         if(!cancelled&&j.ok&&j.years?.length){setYears(j.years);if(!j.years.includes(year))setYear(j.years[0]);}
       }catch{}
     })();
+    etagRef.current='';
     load();
-    const t=setInterval(()=>load(),3000);
+    const tick=()=>{ if(document.visibilityState==='visible') load(); };
+    const onVisibility=()=>{ if(document.visibilityState==='visible') load(); };
+    const t=setInterval(tick,5000);
     const p=setInterval(()=>setPulse(v=>v+1),1800);
-    return()=>{cancelled=true;clearInterval(t);clearInterval(p)};
+    document.addEventListener('visibilitychange',onVisibility);
+    return()=>{cancelled=true;clearInterval(t);clearInterval(p);document.removeEventListener('visibilitychange',onVisibility)};
   },[year]);
 
   const k=data?.kpi||{};
@@ -60,7 +80,7 @@ function App(){
         </div>
       </div>
       <div className="top-actions">
-        <div className="realtime"><span className="live-dot"/> REALTIME <small>{lastSync?`• ${lastSync.toLocaleTimeString('id-ID',{hour:'2-digit',minute:'2-digit',second:'2-digit'})}`:''}</small></div>
+        <div className={`realtime status-${syncState}`}><span className="live-dot"/> {syncState==='live'?'REALTIME':syncState==='stale'?'DATA TERAKHIR':'MENUNGGU SUMBER'} <small>{lastSync?`• ${lastSync.toLocaleTimeString('id-ID',{hour:'2-digit',minute:'2-digit',second:'2-digit'})}`:''}</small></div>
         <label className="year-select"><span>TA</span><select value={year} onChange={e=>setYear(Number(e.target.value))}>{years.map(y=><option key={y} value={y}>{y}</option>)}</select></label>
       </div>
     </header>
