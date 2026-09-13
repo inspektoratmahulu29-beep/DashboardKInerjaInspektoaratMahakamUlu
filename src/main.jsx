@@ -117,7 +117,10 @@ function App(){
           </div>
           <div className={`hero-orb p${pulse%4}`} aria-hidden="true">
             <div className="orb-ring r1"/><div className="orb-ring r2"/><div className="orb-ring r3"/>
-            <div className="orb-core"><img src="/assets/logo-mahakam-ulu.png" alt=""/></div>
+            <div className="orb-core-with-label">
+              <div className="orb-core"><img src="/assets/logo-mahakam-ulu.png" alt=""/></div>
+              <span className="orb-label-sikap">SIKAP</span>
+            </div>
             <i className="orbit-point d1"/><i className="orbit-point d2"/><i className="orbit-point d3"/>
           </div>
         </section>
