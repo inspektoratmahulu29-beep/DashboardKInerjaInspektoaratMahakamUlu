@@ -20,7 +20,7 @@ function App(){
     try{
       const headers={};
       if(etagRef.current) headers['If-None-Match']=etagRef.current;
-      const r=await fetch(`/api/public/dashboard?year=${year}`,{headers,cache:'no-store',signal:controller.signal});
+      const r=await fetch(`/api/public/dashboard?year=${year}&v=12.2`,{headers,cache:'no-store',signal:controller.signal});
       if(r.status===304){setError('');setSyncState('live');return;}
       const j=await r.json();
       if(!r.ok) throw new Error(j.message||j.error||`HTTP ${r.status}`);
