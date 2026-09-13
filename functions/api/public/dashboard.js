@@ -238,8 +238,37 @@ function monevTW(rows,targetCols,realCols){
 }
 function outputCount(rows,col){return rows.reduce((s,r)=>{const n=num(r?.[col]);return s+(validNum(n)&&n>0?n:0)},0);}
 function pkpt(rows){
-  const c={selesai:0,berjalan:0,belum:0,total:0};
-  for(const r of rows){const s=text(r?.[4]).toLowerCase();if(s.includes('sudah')||s==='selesai')c.selesai++;else if(s.includes('berjalan'))c.berjalan++;else if(s.includes('belum'))c.belum++;else continue;c.total++;}
+  /*
+   * CANONICAL PKPT KPI — harus sama persis dengan Web 1.
+   *
+   * Web 1 hanya menghitung item penugasan pada bagian status PKPT:
+   * - data mulai baris index 6 (baris sheet 7)
+   * - hanya baris yang memiliki NAMA AKTIVITAS/PENUGASAN pada kolom D (index 3)
+   * - berhenti tepat sebelum section "REALISASI OUTPUT PENUGASAN"
+   * - status dibaca dari kolom E (index 4)
+   *
+   * Versi Web 2 sebelumnya menghitung SEMUA baris berstatus di seluruh sheet,
+   * sehingga satu baris/rekap pada section output dapat ikut terhitung dan hasil
+   * menjadi 77 sementara Web 1 yang canonical adalah 76.
+   */
+  const source = Array.isArray(rows) ? rows : [];
+  const norm = v => String(v ?? '').replace(/\\s+/g,' ').trim();
+  const outputHeader = source.findIndex(r =>
+    norm(r?.[1]).toUpperCase().includes('REALISASI OUTPUT PENUGASAN')
+  );
+  const statusEnd = outputHeader > 0 ? outputHeader : source.length;
+
+  const items = source
+    .slice(6, statusEnd)
+    .filter(r => norm(r?.[3]) !== '');
+
+  const c = { selesai:0, berjalan:0, belum:0, total:items.length };
+  for (const r of items) {
+    const status = norm(r?.[4]).toLowerCase();
+    if (status === 'sudah' || status.includes('selesai')) c.selesai++;
+    else if (status.includes('berjalan') || status.includes('proses')) c.berjalan++;
+    else if (status.includes('belum')) c.belum++;
+  }
   return c;
 }
 function completeness(rows){return rows.length?pct(rows.filter(rowHasText).length/rows.length*100):0;}
@@ -267,7 +296,7 @@ async function buildSnapshot(env, year) {
   Object.assign(kpi,{penugasan:pk.total,selesai:pk.selesai,berjalan:pk.berjalan,belum:pk.belum,outputUtama,outputPenunjang,capaian:cs});
   const sheets=SHEETS.map(c=>{const rows=byName[c]||[];return {name:c,percent:completeness(rows),rows:rows.filter(rowHasText).length};});
   const overall=sheets.length?percentAverage(sheets.map(s=>s.percent)):0;
-  return {year,updatedAt:new Date().toISOString(),source:'Google Sheets via Cloudflare Backend',version:'12.2-physical-kpi',kpi,sheets,overallCompleteness:overall,formulas:{
+  return {year,updatedAt:new Date().toISOString(),source:'Google Sheets via Cloudflare Backend',version:'15.1-pkpt-canonical-web1',kpi,sheets,overallCompleteness:overall,formulas:{
     totalAnggaran:'Total resmi pada Realisasi Fisik & Keu; fallback hanya ringkasan program tingkat atas',
     realisasiKeuangan:'Total resmi pada Realisasi Fisik & Keu; fallback hanya ringkasan program tingkat atas',
     serapan:'Realisasi Keuangan ÷ Anggaran × 100', realisasiFisik:'Nilai fisik resmi/tertimbang dari sumber',
@@ -279,7 +308,7 @@ export async function onRequestGet({request,env}){
   const url=new URL(request.url);
   const year=Math.min(2100,Math.max(2000,Number(url.searchParams.get('year')||2026)));
   const cache=caches.default;
-  const key=new Request(`${url.origin}/__cache/public-dashboard?year=${encodeURIComponent(year)}&v=12.2`);
+  const key=new Request(`${url.origin}/__cache/public-dashboard?year=${encodeURIComponent(year)}&v=15.1`);
   const cached=await cache.match(key);
   if(cached){
     const out=new Response(cached.body,cached); out.headers.set('x-dashboard-cache','HIT');
@@ -287,7 +316,7 @@ export async function onRequestGet({request,env}){
     if(tag && request.headers.get('if-none-match')===tag) return new Response(null,{status:304,headers:{etag:tag,'cache-control':'public,max-age=2,s-maxage=8,stale-while-revalidate=20'}});
     return out;
   }
-  const staleKey=new Request(`${url.origin}/__cache/public-dashboard-stale?year=${encodeURIComponent(year)}&v=12.2`);
+  const staleKey=new Request(`${url.origin}/__cache/public-dashboard-stale?year=${encodeURIComponent(year)}&v=15.1`);
   let build=inflight.get(year);
   if(!build){
     build=(async()=>{
