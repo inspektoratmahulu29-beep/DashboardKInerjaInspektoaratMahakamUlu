@@ -72,12 +72,10 @@ function App(){
   return <div className="app">
     <header className="topbar">
       <div className="brand-wrap">
-        <div className="logo-pair">
-          <div className="logo-with-label">
-            <div className="logo-frame"><img src="/assets/logo-mahakam-ulu.png" alt="Lambang Kabupaten Mahakam Ulu" /></div>
-            <span className="logo-label-sikap">SIKAP</span>
-          </div>
+        <div className="logo-pair logo-pair-with-sikap">
+          <div className="logo-frame"><img src="/assets/logo-mahakam-ulu.png" alt="Lambang Kabupaten Mahakam Ulu" /></div>
           <div className="logo-frame logo-ins"><img src="/assets/logo-inspektorat.png" alt="Logo Inspektorat Kabupaten Mahakam Ulu" /></div>
+          <span className="logo-pair-sikap">SIKAP</span>
         </div>
         <div className="brand-copy">
           <div className="brand-kicker">PEMERINTAH KABUPATEN MAHAKAM ULU</div>
