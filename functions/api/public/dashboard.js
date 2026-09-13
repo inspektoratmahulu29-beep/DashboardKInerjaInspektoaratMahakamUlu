@@ -99,12 +99,27 @@ function physicalFinancial(rows) {
   const office = physicalRows[officeIndex] || [];
   const officialTotal = parse(office[2]);
   const officialFin = parse(office[6]);
+  const officialPhysical = parse(office[4]);
   const fallbackBudget = top.reduce((a, g) => a + (g.budget || 0), 0);
   const fallbackFin = top.reduce((a, g) => a + (g.fin || 0), 0);
   const budgetTotal = officialTotal !== null ? officialTotal : fallbackBudget;
   const financialTotal = officialFin !== null ? officialFin : fallbackFin;
 
-  // EXACT Web 1 logic: detail physical comes from E, H only when E is missing.
+  // WEB 1 CANONICAL KPI SYNC:
+  // Web 1 persists/calculates the official Inspektorat total in E on the office row.
+  // Use that value first so Web 2 cannot accidentally turn a valid KPI into 0 just
+  // because one or more detail formula results are temporarily 0/blank while Google
+  // Sheets is recalculating. Detail-weighted calculation remains the fallback.
+  const normalizePhysical = value => {
+    if (!finite(value)) return null;
+    // Some Google/Excel representations can expose a percent-formatted decimal (0..1)
+    // while the dashboard expects percentage points (0..100).
+    if (value >= 0 && value <= 1.000001) return value * 100;
+    return value;
+  };
+  const canonicalOfficePhysical = normalizePhysical(officialPhysical);
+
+  // EXACT Web 1 detail logic: E is primary, H only when E is missing.
   const physicalPairs = [];
   for (const g of top) {
     for (let rr = g.summary + 1; rr < g.next; rr++) {
@@ -120,14 +135,23 @@ function physicalFinancial(rows) {
     }
   }
 
-  const derivedPhysical = physicalPairs.length
+  const derivedPhysicalRaw = physicalPairs.length
     ? physicalPairs.reduce((a, x) => a + x.budget * x.physical, 0) /
       physicalPairs.reduce((a, x) => a + x.budget, 0)
     : null;
+  const derivedPhysical = normalizePhysical(derivedPhysicalRaw);
 
-  // Same Web 1 fallback: weighted program summaries, then official office physical.
-  let physicalRate = derivedPhysical;
-  let physicalSource = physicalPairs.length ? 'detail-weighted-exact-web1' : 'none';
+  // Canonical order for public sync:
+  // 1) official Web 1 office total (E row of INSPEKTORAT),
+  // 2) detail weighted value,
+  // 3) program weighted value,
+  // 4) raw office value as final fallback.
+  let physicalRate = canonicalOfficePhysical !== null && canonicalOfficePhysical > 0
+    ? canonicalOfficePhysical
+    : derivedPhysical;
+  let physicalSource = canonicalOfficePhysical !== null && canonicalOfficePhysical > 0
+    ? 'web1-office-total-E-canonical'
+    : (physicalPairs.length ? 'detail-weighted-exact-web1' : 'none');
   if (!finite(physicalRate)) {
     const programPairs = [];
     for (const g of top) {
@@ -141,18 +165,21 @@ function physicalFinancial(rows) {
       }
     }
     if (programPairs.length) {
-      physicalRate = programPairs.reduce((a, x) => a + x.budget * x.physical, 0) /
-        programPairs.reduce((a, x) => a + x.budget, 0);
-      physicalSource = 'program-weighted-exact-web1';
+      const programPhysical = normalizePhysical(
+        programPairs.reduce((a, x) => a + x.budget * x.physical, 0) /
+        programPairs.reduce((a, x) => a + x.budget, 0)
+      );
+      if (finite(programPhysical)) {
+        physicalRate = programPhysical;
+        physicalSource = 'program-weighted-exact-web1';
+      }
     }
   }
   if (!finite(physicalRate)) {
-    const officeE = parse(office[4]);
-    const officeH = parse(office[7]);
-    const officePhysical = officeE !== null ? officeE : officeH;
-    if (finite(officePhysical)) {
-      physicalRate = officePhysical;
-      physicalSource = 'office-total-exact-web1';
+    const rawOffice = normalizePhysical(parse(office[4]));
+    if (finite(rawOffice)) {
+      physicalRate = rawOffice;
+      physicalSource = 'office-total-E-fallback';
     }
   }
 
@@ -196,7 +223,7 @@ async function buildSnapshot(env, year) {
   const byName={};
   for(let i=0;i<resolved.length;i++) byName[resolved[i].canonical]=upstream.valueRanges?.[i]?.values||[];
   const rf=physicalFinancial(byName['Realisasi Fisik & Keu']||[]);
-  const kpi={totalAnggaran:rf.budget,realisasiKeuangan:rf.financial,serapan:rf.financialRate,realisasiFisik:rf.physicalRate,sisaDana:rf.remaining};
+  const kpi={totalAnggaran:rf.budget,realisasiKeuangan:rf.financial,serapan:rf.financialRate,realisasiFisik:rf.physicalRate,sisaDana:rf.remaining,physicalSource:rf.physicalSource,physicalRowsCount:rf.physicalRowsCount};
   const cs={
     strategic:capaian(byName['Capaian Sasaran Strategis']||[],4,5), program:capaian(byName['Capaian Sasaran Program']||[],5,6),
     kegiatanUtama:capaian(byName['Capaian Sasaran Kegiatan Utama']||[],6,7), kegiatanPenunjang:capaian(byName['Capaian Sasaran Kegiatan(Penun)']||[],7,8),
@@ -222,7 +249,7 @@ export async function onRequestGet({request,env}){
   const url=new URL(request.url);
   const year=Math.min(2100,Math.max(2000,Number(url.searchParams.get('year')||2026)));
   const cache=caches.default;
-  const key=new Request(`${url.origin}/__cache/public-dashboard?year=${encodeURIComponent(year)}&v=11.4`);
+  const key=new Request(`${url.origin}/__cache/public-dashboard?year=${encodeURIComponent(year)}&v=11.5`);
   const cached=await cache.match(key);
   if(cached){
     const out=new Response(cached.body,cached); out.headers.set('x-dashboard-cache','HIT');
@@ -230,7 +257,7 @@ export async function onRequestGet({request,env}){
     if(tag && request.headers.get('if-none-match')===tag) return new Response(null,{status:304,headers:{etag:tag,'cache-control':'public,max-age=2,s-maxage=8,stale-while-revalidate=20'}});
     return out;
   }
-  const staleKey=new Request(`${url.origin}/__cache/public-dashboard-stale?year=${encodeURIComponent(year)}&v=11.4`);
+  const staleKey=new Request(`${url.origin}/__cache/public-dashboard-stale?year=${encodeURIComponent(year)}&v=11.5`);
   let build=inflight.get(year);
   if(!build){
     build=(async()=>{
