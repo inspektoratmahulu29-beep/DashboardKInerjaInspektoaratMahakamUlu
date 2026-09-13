@@ -128,7 +128,22 @@ function physicalFinancial(rows) {
       const budget = parse(r[2]);
       const e = parse(r[4]);
       const h = parse(r[7]);
-      const physical = e !== null ? e : h;
+      const gValue = parse(r[6]);
+      // Google Sheets can temporarily expose a formula result of 0 for E while
+      // the dependent formula is recalculating. In this template H is the stable
+      // per-detail physical fallback used by Web 1. Treat E=0 with H>0 as stale.
+      // Recovery order for each detail row:
+      // E = published physical result.
+      // H = Web 1's stable fallback when E is blank/stale.
+      // G/C = final recovery only when both formula results are unavailable.
+      // In this workbook E = I/D*100, I = H*D/100, and H = G/C*100 at detail
+      // level, so G/C is algebraically equivalent to E for those leaf rows.
+      const detailFromFinancial = budget > 0 && gValue !== null ? (gValue / budget) * 100 : null;
+      const physical = (e !== null && e !== 0)
+        ? e
+        : (h !== null && h !== 0)
+          ? h
+          : detailFromFinancial;
       if (budget !== null && budget > 0 && physical !== null && finite(physical)) {
         physicalPairs.push({ budget, physical });
       }
@@ -159,7 +174,22 @@ function physicalFinancial(rows) {
       const budget = parse(r[2]);
       const e = parse(r[4]);
       const h = parse(r[7]);
-      const physical = e !== null ? e : h;
+      const gValue = parse(r[6]);
+      // Google Sheets can temporarily expose a formula result of 0 for E while
+      // the dependent formula is recalculating. In this template H is the stable
+      // per-detail physical fallback used by Web 1. Treat E=0 with H>0 as stale.
+      // Recovery order for each detail row:
+      // E = published physical result.
+      // H = Web 1's stable fallback when E is blank/stale.
+      // G/C = final recovery only when both formula results are unavailable.
+      // In this workbook E = I/D*100, I = H*D/100, and H = G/C*100 at detail
+      // level, so G/C is algebraically equivalent to E for those leaf rows.
+      const detailFromFinancial = budget > 0 && gValue !== null ? (gValue / budget) * 100 : null;
+      const physical = (e !== null && e !== 0)
+        ? e
+        : (h !== null && h !== 0)
+          ? h
+          : detailFromFinancial;
       if (budget !== null && budget > 0 && physical !== null && finite(physical)) {
         programPairs.push({ budget, physical });
       }
@@ -237,7 +267,7 @@ async function buildSnapshot(env, year) {
   Object.assign(kpi,{penugasan:pk.total,selesai:pk.selesai,berjalan:pk.berjalan,belum:pk.belum,outputUtama,outputPenunjang,capaian:cs});
   const sheets=SHEETS.map(c=>{const rows=byName[c]||[];return {name:c,percent:completeness(rows),rows:rows.filter(rowHasText).length};});
   const overall=sheets.length?percentAverage(sheets.map(s=>s.percent)):0;
-  return {year,updatedAt:new Date().toISOString(),source:'Google Sheets via Cloudflare Backend',kpi,sheets,overallCompleteness:overall,formulas:{
+  return {year,updatedAt:new Date().toISOString(),source:'Google Sheets via Cloudflare Backend',version:'12.2-physical-kpi',kpi,sheets,overallCompleteness:overall,formulas:{
     totalAnggaran:'Total resmi pada Realisasi Fisik & Keu; fallback hanya ringkasan program tingkat atas',
     realisasiKeuangan:'Total resmi pada Realisasi Fisik & Keu; fallback hanya ringkasan program tingkat atas',
     serapan:'Realisasi Keuangan ÷ Anggaran × 100', realisasiFisik:'Nilai fisik resmi/tertimbang dari sumber',
@@ -249,7 +279,7 @@ export async function onRequestGet({request,env}){
   const url=new URL(request.url);
   const year=Math.min(2100,Math.max(2000,Number(url.searchParams.get('year')||2026)));
   const cache=caches.default;
-  const key=new Request(`${url.origin}/__cache/public-dashboard?year=${encodeURIComponent(year)}&v=11.5`);
+  const key=new Request(`${url.origin}/__cache/public-dashboard?year=${encodeURIComponent(year)}&v=12.2`);
   const cached=await cache.match(key);
   if(cached){
     const out=new Response(cached.body,cached); out.headers.set('x-dashboard-cache','HIT');
@@ -257,7 +287,7 @@ export async function onRequestGet({request,env}){
     if(tag && request.headers.get('if-none-match')===tag) return new Response(null,{status:304,headers:{etag:tag,'cache-control':'public,max-age=2,s-maxage=8,stale-while-revalidate=20'}});
     return out;
   }
-  const staleKey=new Request(`${url.origin}/__cache/public-dashboard-stale?year=${encodeURIComponent(year)}&v=11.5`);
+  const staleKey=new Request(`${url.origin}/__cache/public-dashboard-stale?year=${encodeURIComponent(year)}&v=12.2`);
   let build=inflight.get(year);
   if(!build){
     build=(async()=>{
@@ -272,7 +302,7 @@ export async function onRequestGet({request,env}){
   try{
     const {body,etag}=await build;
     const physicalKpiSource = (() => { try { return JSON.parse(body)?.kpi?.realisasiFisik != null ? (JSON.parse(body)?.kpi?.physicalSource || 'same-snapshot') : 'missing'; } catch { return 'unknown'; } })();
-    const response=new Response(body,{headers:{'content-type':'application/json; charset=utf-8','cache-control':'public,max-age=2,s-maxage=8,stale-while-revalidate=20','cdn-cache-control':'public,s-maxage=8,stale-while-revalidate=20','etag':etag,'x-data-source':'google-sheets','x-dashboard-cache':'MISS','x-physical-kpi-source':physicalKpiSource}});
+    const response=new Response(body,{headers:{'content-type':'application/json; charset=utf-8','cache-control':'public,max-age=2,s-maxage=8,stale-while-revalidate=20','cdn-cache-control':'public,s-maxage=8,stale-while-revalidate=20','etag':etag,'x-data-source':'google-sheets','x-dashboard-cache':'MISS','x-physical-kpi-source':physicalKpiSource,'x-physical-kpi-rule':'E-primary-H-fallback-GC-recovery'}});
     await Promise.all([
       cache.put(key,new Response(body,{headers:{...Object.fromEntries(response.headers), 'cache-control':'public,max-age=8'}})),
       cache.put(staleKey,new Response(body,{headers:{...Object.fromEntries(response.headers), 'cache-control':'public,max-age=120'}}))
