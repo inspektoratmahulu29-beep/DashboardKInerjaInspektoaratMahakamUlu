@@ -35,29 +35,153 @@ function resolveYearTitle(year, canonical, titles) {
 }
 
 function physicalFinancial(rows) {
-  // Prefer the official total row / office row. Do not add detail rows when a total exists.
-  let totalRow = -1;
-  for (let i=0;i<rows.length;i++) {
-    const joined=(rows[i]||[]).map(text).join(' ').toUpperCase();
-    if (joined.includes('JUMLAH BELANJA') || joined.includes('TOTAL BELANJA')) { totalRow=i; break; }
-  }
-  if (totalRow<0 && rows[9]) totalRow=9;
-  let budget = totalRow>=0 ? num(rows[totalRow]?.[2]) : null;
-  let financial = totalRow>=0 ? num(rows[totalRow]?.[6]) : null;
-  let physical = totalRow>=0 ? num(rows[totalRow]?.[4]) : null;
+  /*
+   * KPI REALISASI FISIK — HARUS SAMA DENGAN LOGIKA WEB 1.
+   *
+   * Struktur sheet "Realisasi Fisik & Keu":
+   * C = Anggaran
+   * D = Bobot
+   * E = Realisasi Fisik (%)
+   * F = Fisik Tertimbang (%)
+   * G = Realisasi Keuangan (Rp)
+   * H = Realisasi Keuangan (%)
+   * I = Keuangan Tertimbang (%)
+   *
+   * Nilai KPI fisik resmi Web 1 dihitung dari DETAIL, berbobot menurut
+   * anggaran: SUM(C*E) / SUM(C). Baris kantor/total hanya dipakai sebagai
+   * fallback apabila detail belum tersedia.
+   *
+   * Ini penting karena E dapat sementara blank/error saat Google Sheets
+   * belum selesai menghitung formula. Pada kondisi itu H menjadi fallback
+   * per baris (secara aljabar E = H pada template ini), sama seperti Web 1.
+   */
+  const physicalRows = rows || [];
+  const text = v => String(v ?? '').replace(/\s+/g, ' ').trim();
+  const parse = v => {
+    if (typeof v === 'number' && Number.isFinite(v)) return v;
+    const s = String(v ?? '').trim().replace(/\s/g, '');
+    if (!s || s.startsWith('=')) return null;
+    try {
+      let n;
+      if (s.includes('.') && s.includes(',')) n = Number(s.replace(/\./g, '').replace(',', '.'));
+      else if ((s.match(/\./g) || []).length > 1) n = Number(s.replace(/\./g, ''));
+      else n = Number(s.replace(',', '.'));
+      return Number.isFinite(n) ? n : null;
+    } catch { return null; }
+  };
+  const finite = v => Number.isFinite(v);
 
-  if (!validNum(budget) || !validNum(financial) || !validNum(physical)) {
-    // Fallback only to likely top-level program summary rows; never sum every detail row.
-    const candidates=[10,25,40].filter(i=>rows[i]);
-    if (!validNum(budget)) budget=candidates.reduce((s,i)=>s+(num(rows[i]?.[2])||0),0) || null;
-    if (!validNum(financial)) financial=candidates.reduce((s,i)=>s+(num(rows[i]?.[6])||0),0) || null;
-    if (!validNum(physical)) {
-      const ps=candidates.map(i=>[num(rows[i]?.[2]),num(rows[i]?.[4])]).filter(([a,p])=>validNum(a)&&validNum(p)&&a>0);
-      physical=ps.length?ps.reduce((s,[a,p])=>s+a*p,0)/ps.reduce((s,[a])=>s+a,0):null;
+  // 1) Temukan baris kantor utama "I / INSPEKTORAT".
+  let officeIndex = physicalRows.findIndex(r =>
+    text(r?.[0]).toUpperCase() === 'I' &&
+    text(r?.[1]).toUpperCase().includes('INSPEKTORAT')
+  );
+  if (officeIndex < 0) officeIndex = Math.min(9, Math.max(0, physicalRows.length - 1));
+
+  // 2) Temukan header program yang membatasi kelompok detail.
+  const programRows = [];
+  for (let i = officeIndex + 1; i < physicalRows.length; i++) {
+    const no = text(physicalRows[i]?.[0]);
+    const label = text(physicalRows[i]?.[1]).toUpperCase();
+    if (/^\d+$/.test(no) && label.startsWith('PROGRAM ')) programRows.push(i + 1); // 1-based
+  }
+
+  // 3) Hitung fisik detail berbobot anggaran — sumber utama.
+  const detailPairs = [];
+  const top = [];
+  for (let i = 0; i < programRows.length; i++) {
+    const summaryRow = programRows[i];
+    const nextRow = programRows[i + 1] || (physicalRows.length + 1);
+    const summary = physicalRows[summaryRow - 1] || [];
+
+    let groupBudget = parse(summary[2]);
+    let groupFinancial = parse(summary[6]);
+    let groupPhysical = parse(summary[4]);
+    if (!finite(groupBudget) || groupBudget < 0) groupBudget = 0;
+
+    // Detail dimulai setelah baris program.
+    for (let rr = summaryRow + 1; rr < nextRow; rr++) {
+      const r = physicalRows[rr - 1] || [];
+      if (!text(r[1])) continue;
+
+      const budget = parse(r[2]);
+      // E = fisik. H = fallback ketika E masih blank/error.
+      const physical = parse(r[4]) ?? parse(r[7]);
+      if (finite(budget) && budget > 0 && finite(physical)) {
+        detailPairs.push({ budget, physical });
+      }
+    }
+
+    // Bila nilai ringkasan program tersedia, simpan sebagai fallback.
+    const summaryPhysical = parse(summary[4]) ?? parse(summary[7]);
+    if (finite(groupBudget) && groupBudget > 0 && finite(summaryPhysical)) {
+      groupPhysical = summaryPhysical;
+      top.push({ budget: groupBudget, physical: summaryPhysical, financial: groupFinancial });
+    } else if (finite(groupBudget) && groupBudget > 0) {
+      top.push({ budget: groupBudget, physical: null, financial: groupFinancial });
     }
   }
-  const rate=validNum(budget)&&budget>0&&validNum(financial)?financial/budget*100:null;
-  return {budget:budget||0,financial:financial||0,financialRate:pct(rate),physicalRate:pct(physical),remaining:Math.max(0,(budget||0)-(financial||0))};
+
+  let physicalRate = null;
+  let physicalSource = 'none';
+
+  // Persis prinsip Web 1: detail fisik yang valid menjadi sumber utama.
+  if (detailPairs.length) {
+    const budgetSum = detailPairs.reduce((s, x) => s + x.budget, 0);
+    const weightedSum = detailPairs.reduce((s, x) => s + x.budget * x.physical, 0);
+    if (budgetSum > 0) {
+      physicalRate = weightedSum / budgetSum;
+      physicalSource = 'detail-weighted';
+    }
+  }
+
+  // Fallback 1: weighted program summaries.
+  if (!finite(physicalRate) && top.length) {
+    const pairs = top.filter(x => finite(x.budget) && x.budget > 0 && finite(x.physical));
+    const budgetSum = pairs.reduce((s, x) => s + x.budget, 0);
+    if (budgetSum > 0) {
+      physicalRate = pairs.reduce((s, x) => s + x.budget * x.physical, 0) / budgetSum;
+      physicalSource = 'program-weighted';
+    }
+  }
+
+  // 4) Nilai anggaran/keuangan tetap mengikuti baris kantor utama,
+  // sama seperti Web 1.
+  const office = physicalRows[officeIndex] || [];
+  let budget = parse(office[2]);
+  let financial = parse(office[6]);
+
+  if (!finite(budget)) {
+    const sumTop = top.reduce((s, x) => s + (finite(x.budget) ? x.budget : 0), 0);
+    budget = sumTop || 0;
+  }
+  if (!finite(financial)) {
+    const sumTop = top.reduce((s, x) => s + (finite(x.financial) ? x.financial : 0), 0);
+    financial = sumTop || 0;
+  }
+
+  // Fallback terakhir hanya bila benar-benar tidak ada detail/program yang valid.
+  if (!finite(physicalRate)) {
+    const officePhysical = parse(office[4]) ?? parse(office[7]);
+    if (finite(officePhysical)) {
+      physicalRate = officePhysical;
+      physicalSource = 'office-total';
+    }
+  }
+
+  const financialRate = finite(budget) && budget > 0 && finite(financial)
+    ? (financial / budget) * 100
+    : null;
+
+  return {
+    budget: finite(budget) ? budget : 0,
+    financial: finite(financial) ? financial : 0,
+    financialRate: pct(financialRate),
+    physicalRate: pct(physicalRate),
+    remaining: Math.max(0, (finite(budget) ? budget : 0) - (finite(financial) ? financial : 0)),
+    physicalSource,
+    physicalRowsCount: detailPairs.length
+  };
 }
 function capaian(rows,targetCol,realCol){
   const ratios=[];
@@ -112,7 +236,7 @@ export async function onRequestGet({request,env}){
   const url=new URL(request.url);
   const year=Math.min(2100,Math.max(2000,Number(url.searchParams.get('year')||2026)));
   const cache=caches.default;
-  const key=new Request(`${url.origin}/__cache/public-dashboard?year=${encodeURIComponent(year)}&v=11`);
+  const key=new Request(`${url.origin}/__cache/public-dashboard?year=${encodeURIComponent(year)}&v=11.2`);
   const cached=await cache.match(key);
   if(cached){
     const out=new Response(cached.body,cached); out.headers.set('x-dashboard-cache','HIT');
@@ -120,7 +244,7 @@ export async function onRequestGet({request,env}){
     if(tag && request.headers.get('if-none-match')===tag) return new Response(null,{status:304,headers:{etag:tag,'cache-control':'public,max-age=2,s-maxage=8,stale-while-revalidate=20'}});
     return out;
   }
-  const staleKey=new Request(`${url.origin}/__cache/public-dashboard-stale?year=${encodeURIComponent(year)}&v=11`);
+  const staleKey=new Request(`${url.origin}/__cache/public-dashboard-stale?year=${encodeURIComponent(year)}&v=11.2`);
   let build=inflight.get(year);
   if(!build){
     build=(async()=>{
@@ -134,7 +258,8 @@ export async function onRequestGet({request,env}){
   }
   try{
     const {body,etag}=await build;
-    const response=new Response(body,{headers:{'content-type':'application/json; charset=utf-8','cache-control':'public,max-age=2,s-maxage=8,stale-while-revalidate=20','cdn-cache-control':'public,s-maxage=8,stale-while-revalidate=20','etag':etag,'x-data-source':'google-sheets','x-dashboard-cache':'MISS'}});
+    const physicalKpiSource = (() => { try { return JSON.parse(body)?.kpi?.realisasiFisik != null ? 'same-snapshot' : 'missing'; } catch { return 'unknown'; } })();
+    const response=new Response(body,{headers:{'content-type':'application/json; charset=utf-8','cache-control':'public,max-age=2,s-maxage=8,stale-while-revalidate=20','cdn-cache-control':'public,s-maxage=8,stale-while-revalidate=20','etag':etag,'x-data-source':'google-sheets','x-dashboard-cache':'MISS','x-physical-kpi-source':physicalKpiSource}});
     await Promise.all([
       cache.put(key,new Response(body,{headers:{...Object.fromEntries(response.headers), 'cache-control':'public,max-age=8'}})),
       cache.put(staleKey,new Response(body,{headers:{...Object.fromEntries(response.headers), 'cache-control':'public,max-age=120'}}))
