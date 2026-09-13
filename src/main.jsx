@@ -82,7 +82,7 @@ function App(){
         <div className="brand-copy">
           <div className="brand-kicker">PEMERINTAH KABUPATEN MAHAKAM ULU</div>
           <b>INSPEKTORAT DAERAH</b>
-          <span>(SIKAP) SISTEM INFORMASI KINERJA DAN PENGAWASAN</span>
+          <span className="brand-sikap-animated">(SIKAP) SISTEM INFORMASI KINERJA DAN PENGAWASAN</span>
         </div>
       </div>
       <div className="top-actions">
@@ -111,7 +111,7 @@ function App(){
         <section className="hero">
           <div className="hero-copy">
             <span className="eyebrow">INSPEKTORAT DAERAH • TA {year}</span>
-            <h1>{sourceTitle.split(' ')[0]} <em>{sourceTitle.split(' ').slice(1).join(' ')}</em></h1>
+            <h1 className="hero-title-animated"><span>{sourceTitle.split(' ')[0]}</span> <em>{sourceTitle.split(' ').slice(1).join(' ')}</em></h1>
             <p>Pusat visualisasi capaian anggaran, realisasi fisik, penugasan PKPT, output, dan kelengkapan kertas kerja Inspektorat Kabupaten Mahakam Ulu.</p>
             <div className="hero-line"><span/><span/><span/><span/><span/></div>
           </div>
@@ -119,7 +119,7 @@ function App(){
             <div className="orb-ring r1"/><div className="orb-ring r2"/><div className="orb-ring r3"/>
             <div className="orb-core-with-label">
               <div className="orb-core"><img src="/assets/logo-mahakam-ulu.png" alt=""/></div>
-              <span className="orb-label-sikap">SIKAP</span>
+              <span className="orb-label-sikap orb-label-sikap-animated">SIKAP</span>
             </div>
             <i className="orbit-point d1"/><i className="orbit-point d2"/><i className="orbit-point d3"/>
           </div>
@@ -153,8 +153,8 @@ function LoadingScreen({progress=0}){
           <img className="loading-logo" src="/assets/favicon.png" alt="Logo Inspektorat"/>
         </div>
       </div>
-      <div className="loading-brand">INSPEKTORAT DAERAH KABUPATEN MAHAKAM ULU</div>
-      <h2>(SIKAP) SISTEM INFORMASI KINERJA DAN PENGAWASAN</h2>
+      <div className="loading-brand loading-brand-animated">INSPEKTORAT DAERAH KABUPATEN MAHAKAM ULU</div>
+      <h2 className="loading-title-animated">(SIKAP) SISTEM INFORMASI KINERJA DAN PENGAWASAN</h2>
       <p>{status}</p>
       <div className="loading-progress">
         <div className="loading-progress-head"><span>MEMUAT DATA</span><strong>{p}%</strong></div>
