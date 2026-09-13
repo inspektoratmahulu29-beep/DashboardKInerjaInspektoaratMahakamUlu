@@ -105,15 +105,26 @@ function physicalFinancial(rows) {
       if (!text(r[1])) continue;
 
       const budget = parse(r[2]);
-      // E = fisik. H = fallback ketika E masih blank/error.
-      const physical = parse(r[4]) ?? parse(r[7]);
+      // Web 1 V11.1 menetapkan E (Realisasi Fisik) secara aljabar sama dengan H
+      // pada template ini: E = I/D*100 dan I = H*D/100, sehingga E = H.
+      // Google Sheets kadang mengembalikan hasil formula E sebagai 0/stale
+      // walaupun H sudah memiliki nilai valid. Karena itu Web 2 harus memprioritaskan
+      // H sebagai sumber stabil untuk KPI fisik, lalu E hanya sebagai fallback.
+      const physicalFromH = parse(r[7]);
+      const physicalFromE = parse(r[4]);
+      const physical = finite(physicalFromH) ? physicalFromH : physicalFromE;
       if (finite(budget) && budget > 0 && finite(physical)) {
         detailPairs.push({ budget, physical });
       }
     }
 
     // Bila nilai ringkasan program tersedia, simpan sebagai fallback.
-    const summaryPhysical = parse(summary[4]) ?? parse(summary[7]);
+    // Sama seperti detail: H adalah representasi stabil dari E pada template ini.
+    const summaryPhysical = (() => {
+      const h = parse(summary[7]);
+      const e = parse(summary[4]);
+      return finite(h) ? h : e;
+    })();
     if (finite(groupBudget) && groupBudget > 0 && finite(summaryPhysical)) {
       groupPhysical = summaryPhysical;
       top.push({ budget: groupBudget, physical: summaryPhysical, financial: groupFinancial });
@@ -162,7 +173,9 @@ function physicalFinancial(rows) {
 
   // Fallback terakhir hanya bila benar-benar tidak ada detail/program yang valid.
   if (!finite(physicalRate)) {
-    const officePhysical = parse(office[4]) ?? parse(office[7]);
+    const officeH = parse(office[7]);
+    const officeE = parse(office[4]);
+    const officePhysical = finite(officeH) ? officeH : officeE;
     if (finite(officePhysical)) {
       physicalRate = officePhysical;
       physicalSource = 'office-total';
@@ -236,7 +249,7 @@ export async function onRequestGet({request,env}){
   const url=new URL(request.url);
   const year=Math.min(2100,Math.max(2000,Number(url.searchParams.get('year')||2026)));
   const cache=caches.default;
-  const key=new Request(`${url.origin}/__cache/public-dashboard?year=${encodeURIComponent(year)}&v=11.2`);
+  const key=new Request(`${url.origin}/__cache/public-dashboard?year=${encodeURIComponent(year)}&v=11.3`);
   const cached=await cache.match(key);
   if(cached){
     const out=new Response(cached.body,cached); out.headers.set('x-dashboard-cache','HIT');
@@ -244,7 +257,7 @@ export async function onRequestGet({request,env}){
     if(tag && request.headers.get('if-none-match')===tag) return new Response(null,{status:304,headers:{etag:tag,'cache-control':'public,max-age=2,s-maxage=8,stale-while-revalidate=20'}});
     return out;
   }
-  const staleKey=new Request(`${url.origin}/__cache/public-dashboard-stale?year=${encodeURIComponent(year)}&v=11.2`);
+  const staleKey=new Request(`${url.origin}/__cache/public-dashboard-stale?year=${encodeURIComponent(year)}&v=11.3`);
   let build=inflight.get(year);
   if(!build){
     build=(async()=>{
