@@ -67,19 +67,19 @@ function App(){
     {id:'output',label:'Total Output',value:num((k.outputUtama||0)+(k.outputPenunjang||0)),note:`Utama ${num(k.outputUtama)} • Penunjang ${num(k.outputPenunjang)}`,icon:'▦',tone:'rose'}
   ],[k]);
 
-  const sourceTitle=tab==='dashboard'?'Pusat Kendali Realisasi Kinerja':tab==='realisasi'?'Realisasi Fisik & Keuangan':tab==='kinerja'?'Kinerja & Monitoring':'Penugasan & Output';
+  const sourceTitle=tab==='dashboard'?'Sistem Informasi Kinerja dan Pengawasan':tab==='realisasi'?'Realisasi Fisik & Keuangan':tab==='kinerja'?'Kinerja & Monitoring':'Penugasan & Output';
 
   return <div className="app">
     <header className="topbar">
       <div className="brand-wrap">
         <div className="logo-pair">
-          <div className="logo-frame"><img src="/assets/logo-mahakam-ulu.png" alt="Lambang Kabupaten Mahakam Ulu" /></div>
+          <div className="logo-stack logo-stack-mahakam"><div className="logo-frame"><img src="/assets/logo-mahakam-ulu.png" alt="Lambang Kabupaten Mahakam Ulu" /></div><span className="logo-sikap">SIKAP</span></div>
           <div className="logo-frame logo-ins"><img src="/assets/logo-inspektorat.png" alt="Logo Inspektorat Kabupaten Mahakam Ulu" /></div>
         </div>
         <div className="brand-copy">
           <div className="brand-kicker">PEMERINTAH KABUPATEN MAHAKAM ULU</div>
           <b>INSPEKTORAT DAERAH</b>
-          <span>Dashboard Realisasi Kinerja & Pengawasan</span>
+          <span className="brand-system-name">(SIKAP) SISTEM INFORMASI KINERJA DAN PENGAWASAN</span>
         </div>
       </div>
       <div className="top-actions">
@@ -108,7 +108,7 @@ function App(){
         <section className="hero">
           <div className="hero-copy">
             <span className="eyebrow">INSPEKTORAT DAERAH • TA {year}</span>
-            <h1>{sourceTitle.split(' ')[0]} <em>{sourceTitle.split(' ').slice(1).join(' ')}</em></h1>
+            <h1 className={tab==='dashboard'?'hero-title-glow':''}>{tab==='dashboard'?<><span>SISTEM INFORMASI</span> <em>KINERJA DAN PENGAWASAN</em></>:<><span>{sourceTitle.split(' ')[0]}</span> <em>{sourceTitle.split(' ').slice(1).join(' ')}</em></>}</h1>
             <p>Pusat visualisasi capaian anggaran, realisasi fisik, penugasan PKPT, output, dan kelengkapan kertas kerja Inspektorat Kabupaten Mahakam Ulu.</p>
             <div className="hero-line"><span/><span/><span/><span/><span/></div>
           </div>
@@ -147,8 +147,8 @@ function LoadingScreen({progress=0}){
           <img className="loading-logo" src="/assets/favicon.png" alt="Logo Inspektorat"/>
         </div>
       </div>
-      <div className="loading-brand">INSPEKTORAT DAERAH</div>
-      <h2>Dashboard Realisasi Kinerja</h2>
+      <div className="loading-brand glow-text">INSPEKTORAT DAERAH KABUPATEN MAHAKAM ULU</div>
+      <h2 className="loading-title-glow">(SIKAP) SISTEM INFORMASI KINERJA DAN PENGAWASAN</h2>
       <p>{status}</p>
       <div className="loading-progress">
         <div className="loading-progress-head"><span>MEMUAT DATA</span><strong>{p}%</strong></div>
