@@ -1,7 +1,7 @@
 {
   "name": "dashboard-realisasi-kinerja-mahakam-ulu-public",
   "private": true,
-  "version": "11.3.0-physical-kpi-sync-final",
+  "version": "11.4.0-physical-kpi-direct-source",
   "type": "module",
   "scripts": {
     "dev": "vite",
